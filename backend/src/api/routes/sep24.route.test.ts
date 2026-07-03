@@ -36,6 +36,7 @@ describe('SEP-24 Routes', () => {
 
   afterEach(() => {
     delete process.env.INTERACTIVE_URL;
+    delete process.env.SEP24_ALLOWED_CALLBACK_DOMAINS;
   });
 
   describe('POST /transactions/deposit/interactive', () => {
@@ -110,6 +111,26 @@ describe('SEP-24 Routes', () => {
       const parsed = new URL(res.body.url);
       expect(parsed.searchParams.get('lang')).toBe('en');
     });
+
+    it('returns 400 when redirect_url is not in whitelist', async () => {
+      process.env.SEP24_ALLOWED_CALLBACK_DOMAINS = 'example.com';
+      const res = await request(app)
+        .post('/transactions/deposit/interactive')
+        .send({ asset_code: 'USDC', redirect_url: 'https://malicious.com/callback' });
+
+      expect(res.statusCode).toBe(400);
+      expect(res.body.error).toBe('invalid redirect_url domain');
+    });
+
+    it('returns 400 when on_change_callback is not in whitelist', async () => {
+      process.env.SEP24_ALLOWED_CALLBACK_DOMAINS = 'example.com';
+      const res = await request(app)
+        .post('/transactions/deposit/interactive')
+        .send({ asset_code: 'USDC', on_change_callback: 'https://malicious.com/hook' });
+
+      expect(res.statusCode).toBe(400);
+      expect(res.body.error).toBe('invalid on_change_callback domain');
+    });
   });
 
   describe('POST /transactions/withdraw/interactive', () => {
@@ -167,57 +188,24 @@ describe('SEP-24 Routes', () => {
       expect(res.body.error).not.toContain(account);
     });
 
-    it('returns 400 when callback is http (not https)', async () => {
+    it('returns 400 when redirect_url is not in whitelist', async () => {
+      process.env.SEP24_ALLOWED_CALLBACK_DOMAINS = 'example.com';
       const res = await request(app)
         .post('/transactions/withdraw/interactive')
-        .send({ asset_code: 'USDC', callback: 'http://example.com/callback' });
+        .send({ asset_code: 'USDC', redirect_url: 'https://malicious.com/callback' });
 
       expect(res.statusCode).toBe(400);
-      expect(res.body.error).toBe('callback must be a valid HTTPS URL');
+      expect(res.body.error).toBe('invalid redirect_url domain');
     });
 
-    it('returns 400 when callback is not a URL', async () => {
+    it('returns 400 when on_change_callback is not in whitelist', async () => {
+      process.env.SEP24_ALLOWED_CALLBACK_DOMAINS = 'example.com';
       const res = await request(app)
         .post('/transactions/withdraw/interactive')
-        .send({ asset_code: 'USDC', callback: 'not-a-url' });
+        .send({ asset_code: 'USDC', on_change_callback: 'https://malicious.com/hook' });
 
       expect(res.statusCode).toBe(400);
-      expect(res.body.error).toBe('callback must be a valid HTTPS URL');
-    });
-
-    it('returns 200 when callback is a valid https URL', async () => {
-      const res = await request(app)
-        .post('/transactions/withdraw/interactive')
-        .send({ asset_code: 'USDC', callback: 'https://example.com/callback' });
-
-      expect(res.statusCode).toBe(200);
-    });
-  });
-
-  describe('POST /transactions/deposit/interactive – callback validation', () => {
-    it('returns 400 when callback is http', async () => {
-      const res = await request(app)
-        .post('/transactions/deposit/interactive')
-        .send({ asset_code: 'USDC', callback: 'http://example.com/cb' });
-
-      expect(res.statusCode).toBe(400);
-      expect(res.body.error).toBe('callback must be a valid HTTPS URL');
-    });
-
-    it('returns 200 when callback is a valid https URL', async () => {
-      const res = await request(app)
-        .post('/transactions/deposit/interactive')
-        .send({ asset_code: 'USDC', callback: 'https://example.com/cb' });
-
-      expect(res.statusCode).toBe(200);
-    });
-
-    it('accepts request with no callback', async () => {
-      const res = await request(app)
-        .post('/transactions/deposit/interactive')
-        .send({ asset_code: 'USDC' });
-
-      expect(res.statusCode).toBe(200);
+      expect(res.body.error).toBe('invalid on_change_callback domain');
     });
   });
 });
