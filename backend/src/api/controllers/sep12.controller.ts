@@ -15,6 +15,7 @@ type UploadedFiles = { [fieldname: string]: Array<{ path: string }> };
 const ALLOWED_CONTENT_TYPES = (process.env.UPLOAD_ALLOWED_CONTENT_TYPES ?? 'image/jpeg,image/png,application/pdf').split(',');
 const UPLOAD_URL_EXPIRY_SECONDS = parseInt(process.env.UPLOAD_URL_EXPIRY_SECONDS ?? '900', 10);
 const KEY_PREFIX = process.env.STORAGE_KEY_PREFIX ?? 'kyc';
+
 const pack = (enc?: { encryptedData: string; iv: string } | null) =>
   enc ? `${enc.iv}|${enc.encryptedData}` : null;
 
@@ -363,6 +364,10 @@ export class Sep12Controller {
 
       if (!upload_id || !account) {
         return res.status(400).json({ error: 'upload_id and account are required' });
+      }
+
+      if (req.user && req.user.publicKey !== account) {
+        return res.status(403).json({ error: 'Forbidden: session account does not match request account' });
       }
 
       const record = uploadStore.get(upload_id);

@@ -98,17 +98,13 @@ impl YieldDistribution {
             .get(&DataKey::TotalStaked)
             .unwrap_or(0);
 
-        // Transfer reward tokens into the contract
-        let reward_token: Address = env.storage().instance().get(&DataKey::RewardToken).unwrap();
-        token::Client::new(&env, &reward_token).transfer(
-            &from,
-            &env.current_contract_address(),
-            &amount,
-        );
-
+        // Update state before external token transfer (reentrancy guard pattern).
         // If nobody is staking yet, rewards accumulate but can't be distributed —
         // they will be claimable once the first stake occurs (reward_per_token
         // stays 0 until then, so the deposited tokens sit idle).
+        let reward_token: Address = env.storage().instance().get(&DataKey::RewardToken).unwrap();
+
+        // CEI: update state before external token transfer
         if total_staked > 0 {
             let mut rpt: i128 = env
                 .storage()
@@ -123,6 +119,15 @@ impl YieldDistribution {
                 .instance()
                 .set(&DataKey::RewardPerTokenStored, &rpt);
         }
+
+        // Transfer reward tokens into the contract after state is updated
+        let reward_token: Address = env.storage().instance().get(&DataKey::RewardToken).unwrap();
+        // External interaction last
+        token::Client::new(&env, &reward_token).transfer(
+            &from,
+            &env.current_contract_address(),
+            &amount,
+        );
 
         // Topic: event name only; from + amount in data.
         env.events()
@@ -147,13 +152,10 @@ impl YieldDistribution {
         // Settle any pending rewards before changing the stake
         Self::_update_reward(&env, &user);
 
+        // Update state before external token transfer (reentrancy guard pattern)
         let stake_token: Address = env.storage().instance().get(&DataKey::StakeToken).unwrap();
-        token::Client::new(&env, &stake_token).transfer(
-            &user,
-            &env.current_contract_address(),
-            &amount,
-        );
 
+        // CEI: update state before external token transfer
         let prev: i128 = Self::_stake_of(&env, &user);
         env.storage()
             .persistent()
@@ -167,6 +169,14 @@ impl YieldDistribution {
         env.storage()
             .instance()
             .set(&DataKey::TotalStaked, &total.checked_add(amount).expect("total staked overflow"));
+
+        let stake_token: Address = env.storage().instance().get(&DataKey::StakeToken).unwrap();
+        // External interaction last
+        token::Client::new(&env, &stake_token).transfer(
+            &user,
+            &env.current_contract_address(),
+            &amount,
+        );
 
         // Topic: event name only; user + amount in data.
         env.events()
@@ -250,8 +260,8 @@ impl YieldDistribution {
                 &reward,
             );
 
-            // Topic: event name only; user + reward in data.
             env.events()
+                .publish(symbol_short!("claimed"), (user, reward));
                 .publish((symbol_short!("claimed"),), (user, reward));
         }
 
