@@ -122,6 +122,10 @@ router.post('/transactions/deposit/interactive', async (req: Request, res: Respo
     return res.status(400).json(invalidAccountResponse());
   }
 
+  if (callback !== undefined && !isValidCallbackUrl(callback)) {
+    return res.status(400).json({ error: 'callback must be a valid HTTPS URL' });
+  }
+
   if (quote_id) {
     const quote = await prisma.quote.findUnique({ where: { id: quote_id } });
     if (!quote) {
@@ -227,6 +231,10 @@ router.post('/transactions/withdraw/interactive', async (req: Request, res: Resp
 
   if (hasInvalidAccount(account)) {
     return res.status(400).json(invalidAccountResponse());
+  }
+
+  if (callback !== undefined && !isValidCallbackUrl(callback)) {
+    return res.status(400).json({ error: 'callback must be a valid HTTPS URL' });
   }
 
   if (quote_id) {

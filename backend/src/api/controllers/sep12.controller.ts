@@ -19,6 +19,14 @@ const KEY_PREFIX = process.env.STORAGE_KEY_PREFIX ?? 'kyc';
 const pack = (enc?: { encryptedData: string; iv: string } | null) =>
   enc ? `${enc.iv}|${enc.encryptedData}` : null;
 
+export const SUPPLEMENTARY_KYC_FIELDS: Record<string, { description: string; optional?: boolean }> = {
+  proof_of_income: { description: 'Proof of income document' },
+  proof_of_address: { description: 'Proof of address document' },
+  occupation: { description: 'Customer occupation', optional: true },
+  employer_name: { description: 'Name of employer', optional: true },
+  tax_id: { description: 'Tax identification number', optional: true },
+};
+
 export class Sep12Controller {
   private toDbStatus(status: KycStatus): KYCStatus {
     switch (status) {
@@ -191,6 +199,10 @@ export class Sep12Controller {
             status: 'ACCEPTED',
           };
         }
+      }
+
+      if (customer.status === KYCStatus.PENDING) {
+        responsePayload.fields = SUPPLEMENTARY_KYC_FIELDS;
       }
 
       res.json(responsePayload);
