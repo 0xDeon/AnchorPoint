@@ -111,7 +111,9 @@ impl LiquidStaking {
 
     pub fn deposit_rewards(env: Env, from: Address, amount: i128) {
         from.require_auth();
-        assert!(amount > 0, "amount must be positive");
+        if amount <= 0 {
+            panic_with_error!(env, Error::AmountNotPositive);
+        }
         Self::_check_not_paused(&env);
 
         let total_staked: i128 = env
@@ -149,13 +151,12 @@ impl LiquidStaking {
 
     pub fn stake(env: Env, user: Address, amount: i128, lock_duration: u64) -> u64 {
         user.require_auth();
-        // Emergency pause check: block staking when the contract is paused.
-        assert!(
-            !env.storage().instance().get::<DataKey, bool>(&DataKey::Paused).unwrap_or(false),
-            "contract is paused"
-        );
-        assert!(amount > 0, "amount must be positive");
-        Self::_check_not_paused(&env);
+        if env.storage().instance().get::<DataKey, bool>(&DataKey::Paused).unwrap_or(false) {
+            panic_with_error!(env, Error::ContractPaused);
+        }
+        if amount <= 0 {
+            panic_with_error!(env, Error::AmountNotPositive);
+        }
 
         let stake_token: Address = env.storage().instance().get(&DataKey::StakeToken).unwrap();
         token::Client::new(&env, &stake_token).transfer(
@@ -234,7 +235,6 @@ impl LiquidStaking {
     pub fn unstake(env: Env, user: Address, token_id: u64) {
         user.require_auth();
         Self::_check_not_paused(&env);
-        
         let nft_contract: Address = env.storage().instance().get(&DataKey::NftContract).unwrap();
         let owner: Address = env.invoke_contract(
             &nft_contract,
@@ -306,7 +306,9 @@ impl LiquidStaking {
             &symbol_short!("owner_of"),
             (token_id,).into_val(&env),
         );
-        assert_eq!(user, owner, "not token owner");
+        if user != owner {
+            panic_with_error!(env, Error::NotTokenOwner);
+        }
 
         let amount: i128 = env.storage().persistent().get(&DataKey::StakeAmount(token_id)).unwrap_or(0);
         assert!(amount > 0, "no stake found for token");
@@ -498,7 +500,9 @@ impl LiquidStaking {
     }
 
     fn _check_not_paused(env: &Env) {
-        assert!(!Self::is_paused(env.clone()), "contract is paused");
+        if Self::is_paused(env.clone()) {
+            panic_with_error!(env, Error::ContractPaused);
+        }
     }
 
     fn _sync_nft_metadata(env: &Env, token_id: u64) {
@@ -717,13 +721,35 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "contract is paused")]
+    #[should_panic(expected = "HostError: Error(Contract, #4)")]
     fn test_normal_unstake_when_paused() {
         let (env, ls_id, _, admin, alice, _, _) = setup();
         let client = LiquidStakingClient::new(&env, &ls_id);
         let token_id = client.stake(&alice, &500_000, &3600);
         client.pause(&admin);
         client.unstake(&alice, &token_id); // Should panic
+    }
+
+    #[test]
+    fn test_pause_blocks_stake() {
+        let (env, ls_id, _, admin, _alice, _, _) = setup();
+        let client = LiquidStakingClient::new(&env, &ls_id);
+
+        // Initially not paused.
+        assert!(!client.is_paused());
+
+        // Admin pauses the contract; state must reflect this.
+        client.pause(&admin);
+        assert!(client.is_paused());
+    }
+
+    #[test]
+    #[should_panic(expected = "HostError: Error(Contract, #4)")]
+    fn test_stake_blocked_when_paused() {
+        let (env, ls_id, _, admin, alice, _, _) = setup();
+        let client = LiquidStakingClient::new(&env, &ls_id);
+        client.pause(&admin);
+        client.stake(&alice, &500_000, &3600); // Should panic
     }
 
     #[test]
@@ -764,6 +790,14 @@ mod tests {
         let client = LiquidStakingClient::new(&env, &ls_id);
         let token_id = client.stake(&alice, &500_000, &3600);
         client.emergency_withdraw(&alice, &token_id); // Should panic
+    }
+
+    #[test]
+    #[should_panic(expected = "HostError: Error(Contract, #13)")]
+    fn test_non_admin_cannot_pause() {
+        let (env, ls_id, _, _, alice, _, _) = setup();
+        let client = LiquidStakingClient::new(&env, &ls_id);
+        client.pause(&alice); // Should panic
     }
 
     #[test]
