@@ -3,6 +3,7 @@ import { StrKey } from '@stellar/stellar-sdk';
 import prisma from '../../lib/prisma';
 import { cryptoService } from '../../services/crypto.service';
 import { kycProvider, KycStatus } from '../../services/kyc-provider.service';
+import { defaultWebhookService } from '../../services/webhook.service';
 import { KYCStatus } from '@prisma/client';
 import { AuthRequest } from '../middleware/auth.middleware';
 import logger from '../../utils/logger';
@@ -18,6 +19,14 @@ const KEY_PREFIX = process.env.STORAGE_KEY_PREFIX ?? 'kyc';
 
 const pack = (enc?: { encryptedData: string; iv: string } | null) =>
   enc ? `${enc.iv}|${enc.encryptedData}` : null;
+
+export const SUPPLEMENTARY_KYC_FIELDS: Record<string, { description: string; optional?: boolean }> = {
+  proof_of_income: { description: 'Proof of income document' },
+  proof_of_address: { description: 'Proof of address document' },
+  occupation: { description: 'Customer occupation', optional: true },
+  employer_name: { description: 'Name of employer', optional: true },
+  tax_id: { description: 'Tax identification number', optional: true },
+};
 
 export class Sep12Controller {
   private toDbStatus(status: KycStatus): KYCStatus {
@@ -193,6 +202,10 @@ export class Sep12Controller {
         }
       }
 
+      if (customer.status === KYCStatus.PENDING) {
+        responsePayload.fields = SUPPLEMENTARY_KYC_FIELDS;
+      }
+
       res.json(responsePayload);
     } catch (error) {
       logger.error('SEP-12 customer GET failed', {
@@ -242,6 +255,13 @@ export class Sep12Controller {
             provider: kycProvider.providerName,
             providerRef: event.providerRef,
           },
+          include: {
+            user: {
+              select: {
+                publicKey: true,
+              },
+            },
+          },
         });
       }
 
@@ -250,14 +270,37 @@ export class Sep12Controller {
           where: { publicKey: event.account },
           include: { kycCustomer: true },
         });
-        targetCustomer = user?.kycCustomer ?? null;
+        targetCustomer = user?.kycCustomer
+          ? { ...user.kycCustomer, user: { publicKey: user.publicKey } }
+          : null;
       }
 
       if (!targetCustomer) return res.status(404).json({ error: 'Customer not found' });
 
-      await prisma.kycCustomer.update({
+      const nextStatus = this.toDbStatus(event.status);
+      const previousStatus = targetCustomer.status;
+
+      if (previousStatus === nextStatus) {
+        return res.status(200).send('OK');
+      }
+
+      const updatedCustomer = await prisma.kycCustomer.update({
         where: { id: targetCustomer.id },
-        data: { status: this.toDbStatus(event.status) },
+        data: { status: nextStatus },
+        include: {
+          user: {
+            select: {
+              publicKey: true,
+            },
+          },
+        },
+      });
+
+      defaultWebhookService.sendKycStatusChanged(updatedCustomer, previousStatus).catch((error) => {
+        logger.error('SEP-12 KYC status updated but webhook delivery failed', {
+          customerId: updatedCustomer.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
       });
 
       res.status(200).send('OK');
