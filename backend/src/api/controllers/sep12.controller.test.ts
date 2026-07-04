@@ -149,7 +149,6 @@ describe('Sep12Controller', () => {
       }));
       expect(storageProviderMock.generatePresignedPutUrl).toHaveBeenCalled();
       expect(uploadStoreMock.create).toHaveBeenCalled();
-      expect(uploadStoreMock.setStatus).toHaveBeenCalledWith(expect.any(String), 'PENDING');
     });
 
     it('returns 400 when required parameters are missing', async () => {
@@ -208,7 +207,7 @@ describe('Sep12Controller', () => {
   describe('confirmUpload', () => {
     it('confirms upload when upload exists and file is present in storage', async () => {
       const expiresAt = new Date(Date.now() + 60_000);
-      const record = uploadStore.create(VALID_ACCOUNT, 'id_photo_front', '', 'image/jpeg', expiresAt);
+      const record = uploadStore.create(VALID_ACCOUNT, 'id_photo_front', 'image/jpeg', expiresAt);
       const req = {
         body: {
           upload_id: record.uploadId,
@@ -260,7 +259,7 @@ describe('Sep12Controller', () => {
 
     it('returns 403 when account does not match upload record', async () => {
       const expiresAt = new Date(Date.now() + 60_000);
-      const record = uploadStore.create('GBZXN7PIRZGNMHGA7MUUUF4GW3F55GQRQ5UKMJTDEFEKTGW4RHFDQLNZ', 'id_photo_front', '', 'image/jpeg', expiresAt);
+      const record = uploadStore.create('GBZXN7PIRZGNMHGA7MUUUF4GW3F55GQRQ5UKMJTDEFEKTGW4RHFDQLNZ', 'id_photo_front', 'image/jpeg', expiresAt);
       const req = {
         body: {
           upload_id: record.uploadId,
@@ -277,7 +276,7 @@ describe('Sep12Controller', () => {
 
     it('returns 422 when file not found in storage', async () => {
       const expiresAt = new Date(Date.now() + 60_000);
-      const record = uploadStore.create(VALID_ACCOUNT, 'id_photo_front', '', 'image/jpeg', expiresAt);
+      const record = uploadStore.create(VALID_ACCOUNT, 'id_photo_front', 'image/jpeg', expiresAt);
       (storageProviderMock.objectExists as jest.Mock).mockResolvedValueOnce(false);
       const req = {
         body: {
@@ -470,7 +469,6 @@ describe('Sep12Controller', () => {
       const record = uploadStore.create(
         VALID_ACCOUNT,
         'id_photo_front',
-        '',
         'image/jpeg',
         expiresAt
       );
@@ -510,7 +508,6 @@ describe('Sep12Controller', () => {
       const record = uploadStore.create(
         VALID_ACCOUNT,
         'id_photo_front',
-        'kyc/pending-key',
         'image/jpeg',
         expiresAt
       );
@@ -540,7 +537,6 @@ describe('Sep12Controller', () => {
       const record = uploadStore.create(
         'GBZXN7PIRZGNMHGA7MUUUF4GW3F55GQRQ5UKMJTDEFEKTGW4RHFDQLNZ',
         'id_photo_front',
-        'kyc/other/key',
         'image/jpeg',
         expiresAt
       );
@@ -570,7 +566,6 @@ describe('Sep12Controller', () => {
       const record = uploadStore.create(
         VALID_ACCOUNT,
         'id_photo_front',
-        '',
         'image/jpeg',
         expiresAt
       );
@@ -612,7 +607,6 @@ describe('Sep12Controller', () => {
       const record = uploadStore.create(
         VALID_ACCOUNT,
         'id_photo_front',
-        '',
         'image/jpeg',
         expiresAt
       );
@@ -830,7 +824,7 @@ describe('Sep12Controller', () => {
 
     it('returns 403 when record account does not match request account', async () => {
       const expiresAt = new Date(Date.now() + 60_000);
-      const record = uploadStore.create('GOTHER', 'id_photo_front', '', 'image/jpeg', expiresAt);
+      const record = uploadStore.create('GOTHER', 'id_photo_front', 'image/jpeg', expiresAt);
       const req = {
         body: { upload_id: record.uploadId, account: VALID_ACCOUNT },
         user: { publicKey: VALID_ACCOUNT },
@@ -845,7 +839,7 @@ describe('Sep12Controller', () => {
 
     it('returns 422 when file does not exist in storage', async () => {
       const expiresAt = new Date(Date.now() + 60_000);
-      const record = uploadStore.create(VALID_ACCOUNT, 'id_photo_front', '', 'image/jpeg', expiresAt);
+      const record = uploadStore.create(VALID_ACCOUNT, 'id_photo_front', 'image/jpeg', expiresAt);
       const req = {
         body: { upload_id: record.uploadId, account: VALID_ACCOUNT },
         user: { publicKey: VALID_ACCOUNT },
@@ -862,7 +856,7 @@ describe('Sep12Controller', () => {
 
     it('returns 200 and marks upload COMPLETED when upload is confirmed', async () => {
       const expiresAt = new Date(Date.now() + 60_000);
-      const record = uploadStore.create(VALID_ACCOUNT, 'id_photo_front', '', 'image/jpeg', expiresAt);
+      const record = uploadStore.create(VALID_ACCOUNT, 'id_photo_front', 'image/jpeg', expiresAt);
       const req = {
         body: { upload_id: record.uploadId, account: VALID_ACCOUNT },
         user: { publicKey: VALID_ACCOUNT },

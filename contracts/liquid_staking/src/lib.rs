@@ -145,30 +145,7 @@ impl LiquidStaking {
         env.events().publish((symbol_short!("dep_rwd"),), (from, amount));
     }
 
-    // ── Admin: Pause/Unpause ─────────────────────────────────────────────
 
-    /// Pause contract operations (emergency).
-    pub fn pause(env: Env, admin: Address) {
-        admin.require_auth();
-        let expected_admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
-        assert_eq!(admin, expected_admin, "unauthorized");
-        env.storage().instance().set(&DataKey::Paused, &true);
-        env.events().publish((symbol_short!("paused"),), ());
-    }
-
-    /// Unpause contract operations.
-    pub fn unpause(env: Env, admin: Address) {
-        admin.require_auth();
-        let expected_admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
-        assert_eq!(admin, expected_admin, "unauthorized");
-        env.storage().instance().set(&DataKey::Paused, &false);
-        env.events().publish((symbol_short!("unpaused"),), ());
-    }
-
-    /// Check if contract is paused.
-    pub fn is_paused(env: Env) -> bool {
-        env.storage().instance().get(&DataKey::Paused).unwrap_or(false)
-    }
 
     pub fn stake(env: Env, user: Address, amount: i128, lock_duration: u64) -> u64 {
         user.require_auth();
@@ -688,7 +665,7 @@ mod tests {
     }
     
     #[test]
-    #[should_panic(expected = "HostError: Error(Contract, 7)")]
+    #[should_panic(expected = "HostError: Error(Contract, #7)")]
     fn test_unstake_locked() {
         let (env, ls_id, _, _, alice, _, _) = setup();
         let client = LiquidStakingClient::new(&env, &ls_id);
@@ -725,7 +702,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "HostError: Error(Contract, 13)")]
+    #[should_panic(expected = "HostError: Error(Contract, #13)")]
     fn test_update_contract_meta_non_admin() {
         let (env, ls_id, _, _, alice, _, _) = setup();
         let client = LiquidStakingClient::new(&env, &ls_id);
@@ -753,7 +730,9 @@ mod tests {
     fn test_pause_and_emergency_withdraw() {
         let (env, ls_id, _, admin, alice, _, _) = setup();
         let client = LiquidStakingClient::new(&env, &ls_id);
-        let stake_token = env.storage().instance().get(&DataKey::StakeToken).unwrap();
+        let stake_token = env.as_contract(&ls_id, || {
+            env.storage().instance().get(&DataKey::StakeToken).unwrap()
+        });
         let token_client = TokenClient::new(&env, &stake_token);
 
         // Stake first

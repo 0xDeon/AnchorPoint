@@ -1,14 +1,22 @@
 import { RegistryService } from './registry.service';
 import { AdvancedCacheService } from './advanced-cache.service';
 import { stellarService } from './stellar.service';
-import { redisService } from './redis.service';
+import { redis } from '../lib/redis';
 
 // Mock dependencies
 jest.mock('./advanced-cache.service');
 jest.mock('./stellar.service');
-jest.mock('./redis.service', () => ({
-  redisService: {
-    client: {},
+jest.mock('../lib/redis', () => ({
+  redis: {
+    duplicate: () => ({
+      subscribe: jest.fn(),
+      on: jest.fn(),
+    }),
+    on: jest.fn(),
+    get: jest.fn(),
+    set: jest.fn(),
+    del: jest.fn(),
+    publish: jest.fn(),
   },
 }));
 
@@ -31,6 +39,9 @@ describe('RegistryService', () => {
     } as any;
 
     mockCacheService.mockImplementation(() => mockCache);
+
+    // Reset the singleton instance to force re-creation with active mock
+    (RegistryService as any).instance = undefined;
 
     // Get instance of RegistryService
     registryService = RegistryService.getInstance();

@@ -1,7 +1,6 @@
-import { Address, Contract, Network, SorobanRpc, xdr } from '@stellar/stellar-sdk';
+import { Address, Contract, rpc, xdr, TransactionBuilder, Account, scValToNative } from '@stellar/stellar-sdk';
 import { config } from '../config/env';
-import { configService } from './config.service';
-import { redisService } from './redis.service';
+import { redis } from '../lib/redis';
 import { AdvancedCacheService } from './advanced-cache.service';
 import { stellarService } from './stellar.service';
 import logger from '../utils/logger';
@@ -22,7 +21,7 @@ export class RegistryService {
 
   private constructor() {
     this.registryContractId = config.REGISTRY_CONTRACT_ID || '';
-    this.cacheService = new AdvancedCacheService(redisService.client, {
+    this.cacheService = new AdvancedCacheService(redis, {
       l1MaxSize: 100,
       l1TtlSeconds: 60,
       l2TtlSeconds: 300,
@@ -38,7 +37,6 @@ export class RegistryService {
   }
 
   private getContractClient(): Contract {
-    const rpc = stellarService.getSorobanRpc();
     return new Contract(this.registryContractId);
   }
 
@@ -52,12 +50,13 @@ export class RegistryService {
       cacheKey,
       async () => {
         logger.debug(`Fetching contract info from registry for type: ${contractType}`);
-        const rpc = stellarService.getSorobanRpc();
+        const rpcServer = stellarService.getSorobanRpc();
         const contract = this.getContractClient();
         
         // Build the contract call
-        const tx = new xdr.TransactionBuilder(
-          new Address(config.ANCHOR_PUBLIC_KEY).toScAddress(),
+        const sourceAccount = new Account(config.ANCHOR_PUBLIC_KEY || 'GBZXN7PIRZGNMHGA7MUUUF4GW3F55GQRQ5UKMJTDEFEKTGW4RHFDQLNZ', '0');
+        const tx = new TransactionBuilder(
+          sourceAccount,
           {
             fee: '100',
             networkPassphrase: stellarService.getPassphrase(),
@@ -69,7 +68,7 @@ export class RegistryService {
           .setTimeout(30)
           .build();
         
-        const simulatedTx = await rpc.simulateTransaction(tx);
+        const simulatedTx = (await rpcServer.simulateTransaction(tx)) as any;
         if (simulatedTx.error) {
           throw new Error(`Failed to simulate transaction: ${simulatedTx.error}`);
         }
@@ -144,22 +143,17 @@ export class RegistryService {
   }
 
   private parseContractInfo(scVal: xdr.ScVal): ContractInfo {
-    const map = scVal.map()!;
-    const get = (key: string) => {
-      const entry = map.find((e) => e.key().str() === key);
-      if (!entry) throw new Error(`Missing key: ${key}`);
-      return entry.val();
-    };
-
+    const native = scValToNative(scVal);
+    if (!native || typeof native !== 'object') {
+      throw new Error('Invalid contract info format');
+    }
     return {
-      address: get('address').address().toString(),
-      version: get('version').str().toString(),
-      contractType: get('contract_type').str().toString(),
-      deployedAt: Number(get('deployed_at').u64()),
-      active: get('active').bool(),
-      previousVersion: get('previous_version').option()
-        ? get('previous_version').option()!.address().toString()
-        : null,
+      address: native.address,
+      version: native.version,
+      contractType: native.contract_type,
+      deployedAt: Number(native.deployed_at),
+      active: Boolean(native.active),
+      previousVersion: native.previous_version || null,
     };
   }
 }

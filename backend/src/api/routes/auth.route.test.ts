@@ -1,5 +1,15 @@
 import request from 'supertest';
 import express from 'express';
+import { rateLimit } from 'express-rate-limit';
+
+jest.mock('../middleware/rate-limit.middleware', () => ({
+  authLimiter: rateLimit({
+    windowMs: 10 * 60 * 1000,
+    max: 10,
+    message: { error: 'Too many authentication attempts, please try again after 10 minutes.' },
+  }),
+}));
+
 import authRouter from './auth.route';
 import { authLimiter } from '../middleware/rate-limit.middleware';
 

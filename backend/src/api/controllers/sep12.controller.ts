@@ -390,13 +390,9 @@ export class Sep12Controller {
         }
 
         const expiresAt = new Date(Date.now() + UPLOAD_URL_EXPIRY_SECONDS * 1000);
-        const record = uploadStore.create(account, field_name, '', content_type, expiresAt);
-        const storageKey = `${KEY_PREFIX}/${account}/${field_name}/${record.uploadId}`;
-        uploadStore.setStatus(record.uploadId, 'PENDING');
-        const storedRecord = uploadStore.get(record.uploadId)!;
-        (storedRecord as any).storageKey = storageKey;
+        const record = uploadStore.create(account, field_name, content_type, expiresAt);
 
-        const url = await storageProvider.generatePresignedPutUrl(storageKey, content_type, UPLOAD_URL_EXPIRY_SECONDS);
+        const url = await storageProvider.generatePresignedPutUrl(record.storageKey, content_type, UPLOAD_URL_EXPIRY_SECONDS);
 
         logger.info('SEP-12 upload-url issued', { account, field_name, uploadId: record.uploadId });
 

@@ -5,17 +5,51 @@
  * on the message structure sent by SmtpAdminEmailService.
  */
 
-// nodemailer-mock must be registered BEFORE the module under test is imported
-jest.mock('nodemailer', () => require('nodemailer-mock'));
+const sentMail: any[] = [];
+const mockNodemailerMock = {
+  createTransport: jest.fn().mockImplementation((opts) => {
+    return {
+      sendMail: jest.fn().mockImplementation((mailOptions) => {
+        sentMail.push(mailOptions);
+        return Promise.resolve({ messageId: 'mock-id' });
+      }),
+    };
+  }),
+  mock: {
+    reset: () => {
+      sentMail.length = 0;
+    },
+    getSentMail: () => {
+      return sentMail;
+    },
+  },
+};
 
-import nodemailerMock from 'nodemailer-mock';
-import { SmtpAdminEmailService } from '../admin-email.service';
+// Mock nodemailer and nodemailer-mock
+jest.mock('nodemailer', () => mockNodemailerMock);
+jest.mock('nodemailer-mock', () => mockNodemailerMock);
 
-// Provide minimal SMTP config so the real send path is exercised
+// Mock the environment config to have SMTP settings
+jest.mock('../config/env', () => {
+  const original = jest.requireActual('../config/env');
+  return {
+    ...original,
+    config: {
+      ...original.config,
+      SMTP_HOST: 'localhost',
+      SMTP_PORT: 587,
+      SMTP_FROM: 'no-reply@anchorpoint.test',
+      ADMIN_PASSWORD_RESET_URL_BASE: 'http://localhost:3000/admin/reset-password',
+    },
+  };
+});
+
 process.env.SMTP_HOST = 'localhost';
 process.env.SMTP_PORT = '587';
 process.env.SMTP_FROM = 'no-reply@anchorpoint.test';
-process.env.ADMIN_PASSWORD_RESET_URL_BASE = 'http://localhost:3000/admin/reset-password';
+
+import nodemailerMock from 'nodemailer-mock';
+import { SmtpAdminEmailService } from './admin-email.service';
 
 describe('SmtpAdminEmailService (nodemailer-mock)', () => {
   let service: SmtpAdminEmailService;
