@@ -1,5 +1,25 @@
 import request from 'supertest';
 import express from 'express';
+
+jest.mock('../../lib/prisma', () => ({
+  __esModule: true,
+  default: {
+    quote: {
+      create: jest.fn().mockResolvedValue({
+        id: 'mock-quote-id',
+        sellAsset: 'USDC',
+        buyAsset: 'XLM',
+        sellAmount: '100',
+        buyAmount: '833',
+        price: '8.33',
+        expiresAt: new Date(Date.now() + 5 * 60 * 1000),
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      }),
+    },
+  },
+}));
+
 import sep38Router from './sep38.route';
 
 jest.mock('../controllers/sep38.controller', () => ({
@@ -13,6 +33,7 @@ jest.mock('../controllers/sep38.controller', () => ({
       destination_asset: destinationAsset,
       destination_amount: sourceAsset.toUpperCase() === destinationAsset.toUpperCase() ? sourceAmount : sourceAsset === 'USDC' ? sourceAmount / 0.12 : sourceAmount * 0.12,
       price: sourceAsset === 'USDC' && destinationAsset === 'XLM' ? 8.33 : 0.12,
+      fee: sourceAmount <= 1000 ? sourceAmount * 0.003 : sourceAmount * 0.0005,
       expiration_time: Math.floor(Date.now() / 1000) + 60,
       context,
       cached: false,
@@ -27,6 +48,7 @@ jest.mock('../controllers/sep38.controller', () => ({
       destination_asset: destinationAsset,
       destination_amount: sourceAmount / 0.12,
       price: 8.33,
+      fee: sourceAmount <= 1000 ? sourceAmount * 0.003 : sourceAmount * 0.0005,
       expiration_time: Math.floor(Date.now() / 1000) + 300,
       context,
     })),
@@ -192,8 +214,6 @@ describe('SEP-38 Price Quotes API', () => {
 
   describe('Price calculation accuracy', () => {
     it('should calculate correct cross rate', async () => {
-      // 1 USDC = 1 USD, 1 XLM = 0.12 USD
-      // So 1 USDC should equal approximately 8.33 XLM
       const response = await request(app)
         .get('/sep38/price')
         .query({
@@ -218,6 +238,33 @@ describe('SEP-38 Price Quotes API', () => {
       expect(response.status).toBe(200);
       expect(response.body.source_amount).toBe(100.50);
       expect(typeof response.body.destination_amount).toBe('number');
+    });
+  });
+
+  describe('Dynamic fee calculation', () => {
+    it('returns a fee field on a price quote', async () => {
+      const response = await request(app)
+        .get('/sep38/price')
+        .query({ source_asset: 'USDC', source_amount: 100, destination_asset: 'XLM' });
+
+      expect(response.status).toBe(200);
+      expect(response.body).toHaveProperty('fee');
+      expect(typeof response.body.fee).toBe('number');
+      expect(response.body.fee).toBeGreaterThanOrEqual(0);
+    });
+
+    it('applies a lower fee percent for large amounts', async () => {
+      const small = await request(app)
+        .get('/sep38/price')
+        .query({ source_asset: 'USDC', source_amount: 100, destination_asset: 'XLM' });
+
+      const large = await request(app)
+        .get('/sep38/price')
+        .query({ source_asset: 'USDC', source_amount: 200_000, destination_asset: 'XLM' });
+
+      const smallRate = small.body.fee / small.body.source_amount;
+      const largeRate = large.body.fee / large.body.source_amount;
+      expect(largeRate).toBeLessThan(smallRate);
     });
   });
 });

@@ -5,7 +5,7 @@
 //! allowing for easy discovery and upgrades across the protocol.
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, Address, Env, String, Vec,
+    contract, contractimpl, contracttype, symbol_short, xdr::ToXdr, Address, Bytes, Env, String, Vec,
 };
 
 /// Contract metadata stored in the registry
@@ -80,6 +80,8 @@ impl Registry {
         let stored_admin: Address = env.storage().instance().get(&DataKey::Admin).expect("admin not set");
         assert!(admin == stored_admin, "unauthorized");
         
+        Self::check_not_zero_address(&env, &address);
+        
         let contract_key = DataKey::Contract(contract_type.clone());
         let timestamp = env.ledger().timestamp();
         
@@ -92,15 +94,23 @@ impl Registry {
                 contract_type: contract_type.clone(),
                 deployed_at: timestamp,
                 active: true,
-                previous_version: Some(existing_info.address),
+                previous_version: Some(existing_info.address.clone()),
             };
             
             env.storage().instance().set(&contract_key, &updated_info);
-            
+
+            // Publish a general update event with old/new address for indexers.
             env.events()
                 .publish(
                     (symbol_short!("update"), contract_type.clone()),
-                    (address, version),
+                    (address.clone(), version.clone()),
+                );
+            // Publish a dedicated address-change event so downstream consumers
+            // can track exactly which address replaced which.
+            env.events()
+                .publish(
+                    (symbol_short!("addr_chg"), contract_type.clone()),
+                    (existing_info.address, address, version),
                 );
         } else {
             // Register new contract
@@ -114,24 +124,30 @@ impl Registry {
             };
             
             env.storage().instance().set(&contract_key, &contract_info);
-            
+
             // Add to contract types list
             let mut contract_types: Vec<String> = env
                 .storage()
                 .instance()
                 .get(&DataKey::AllContractTypes)
                 .unwrap_or(Vec::new(&env));
-            
+
             // Check if already in list to avoid duplicates
             let already_registered = contract_types.iter().any(|t| t == contract_type);
             if !already_registered {
                 contract_types.push_back(contract_type.clone());
                 env.storage().instance().set(&DataKey::AllContractTypes, &contract_types);
             }
-            
+
             env.events()
                 .publish(
                     (symbol_short!("register"), contract_type.clone()),
+                    (address.clone(), version.clone()),
+                );
+            // Dedicated address-set event for new registrations.
+            env.events()
+                .publish(
+                    (symbol_short!("addr_set"), contract_type.clone()),
                     (address, version),
                 );
         }
@@ -190,19 +206,22 @@ impl Registry {
         assert!(admin == stored_admin, "unauthorized");
         
         let contract_key = DataKey::Contract(contract_type.clone());
-        if !env.storage().instance().has(&contract_key) {
-            panic!("contract not registered");
-        }
-        
+        let removed_info: ContractInfo = env
+            .storage()
+            .instance()
+            .get(&contract_key)
+            .expect("contract not registered");
+        let removed_address = removed_info.address;
+
         env.storage().instance().remove(&contract_key);
-        
+
         // Remove from contract types list
         let mut contract_types: Vec<String> = env
             .storage()
             .instance()
             .get(&DataKey::AllContractTypes)
             .unwrap_or(Vec::new(&env));
-        
+
         let mut new_types: Vec<String> = Vec::new(&env);
         for t in contract_types.into_iter() {
             if t != contract_type {
@@ -211,9 +230,15 @@ impl Registry {
         }
         contract_types = new_types;
         env.storage().instance().set(&DataKey::AllContractTypes, &contract_types);
-        
+
         env.events()
-            .publish((symbol_short!("remove"), contract_type), true);
+            .publish((symbol_short!("remove"), contract_type.clone()), true);
+        // Address-removal event so indexers know this mapping is gone.
+        env.events()
+            .publish(
+                (symbol_short!("addr_rmv"), contract_type),
+                removed_address,
+            );
     }
 
     /// Transfer admin rights to a new address
@@ -372,6 +397,17 @@ impl Registry {
     fn check_not_paused(env: &Env) {
         assert!(!Self::is_paused(env.clone()), "registry is paused");
     }
+
+    fn check_not_zero_address(env: &Env, address: &Address) {
+        let xdr: Bytes = address.clone().to_xdr(env);
+        let start = if xdr.len() > 32 { xdr.len() - 32 } else { 0 };
+        for i in start..xdr.len() {
+            if xdr.get(i).unwrap() != 0 {
+                return;
+            }
+        }
+        panic!("cannot register zero address");
+    }
 }
 
 #[cfg(test)]
@@ -411,10 +447,10 @@ mod tests {
         
         client.register_contract(&admin, &contract_type, &address, &version);
         
-        assert!(client.is_registered(contract_type.clone()));
-        assert_eq!(client.get_address(contract_type.clone()), address);
-        assert_eq!(client.get_version(contract_type.clone()), version);
-        assert!(client.is_active(contract_type.clone()));
+        assert!(client.is_registered(&contract_type));
+        assert_eq!(client.get_address(&contract_type), address);
+        assert_eq!(client.get_version(&contract_type), version);
+        assert!(client.is_active(&contract_type));
     }
 
     #[test]
@@ -433,7 +469,7 @@ mod tests {
         
         client.register_contract(&admin, &contract_type, &address2, &version2);
         
-        let info = client.get_contract(contract_type.clone());
+        let info = client.get_contract(&contract_type);
         assert_eq!(info.address, address2);
         assert_eq!(info.version, version2);
         assert_eq!(info.previous_version, Some(address1));
@@ -448,10 +484,10 @@ mod tests {
         let version = String::from_str(&env, "1.0.0");
         
         client.register_contract(&admin, &contract_type, &address, &version);
-        assert!(client.is_active(contract_type.clone()));
+        assert!(client.is_active(&contract_type));
         
         client.deactivate_contract(&admin, &contract_type);
-        assert!(!client.is_active(contract_type.clone()));
+        assert!(!client.is_active(&contract_type));
     }
 
     #[test]
@@ -466,7 +502,7 @@ mod tests {
         client.deactivate_contract(&admin, &contract_type);
         
         client.activate_contract(&admin, &contract_type);
-        assert!(client.is_active(contract_type.clone()));
+        assert!(client.is_active(&contract_type));
     }
 
     #[test]
@@ -478,10 +514,10 @@ mod tests {
         let version = String::from_str(&env, "1.0.0");
         
         client.register_contract(&admin, &contract_type, &address, &version);
-        assert!(client.is_registered(contract_type.clone()));
+        assert!(client.is_registered(&contract_type));
         
         client.remove_contract(&admin, &contract_type);
-        assert!(!client.is_registered(contract_type.clone()));
+        assert!(!client.is_registered(&contract_type));
     }
 
     #[test]
@@ -565,9 +601,24 @@ mod tests {
         client.register_contract(&admin, &contract_type, &v1_address, &String::from_str(&env, "1.0.0"));
         client.register_contract(&admin, &contract_type, &v2_address, &String::from_str(&env, "2.0.0"));
         
-        let history = client.get_upgrade_history(contract_type);
+        let history = client.get_upgrade_history(&contract_type);
         assert_eq!(history.len(), 1);
         assert_eq!(history.get(0).unwrap(), v2_address);
+    }
+
+    #[test]
+    #[should_panic(expected = "cannot register zero address")]
+    fn test_register_with_zero_address() {
+        let (env, client, admin) = setup();
+        
+        use soroban_sdk::xdr::{Hash, ScAddress};
+        use soroban_sdk::TryFromVal;
+        
+        let contract_type = String::from_str(&env, "AMM");
+        let zero_address = Address::try_from_val(&env, &ScAddress::Contract(Hash([0u8; 32]))).unwrap();
+        let version = String::from_str(&env, "1.0.0");
+        
+        client.register_contract(&admin, &contract_type, &zero_address, &version);
     }
 
     #[test]
@@ -585,20 +636,14 @@ mod tests {
     fn test_multiple_contracts() {
         let (env, client, admin) = setup();
         
-        let contracts = vec![
-            ("AMM", "1.0.0"),
-            ("Lending", "1.0.0"),
-            ("Bridge", "1.0.0"),
-            ("XLMWrapper", "1.0.0"),
-            ("LiquidStaking", "1.0.0"),
-        ];
+        let contract_names = ["AMM", "Lending", "Bridge", "XLMWrapper", "LiquidStaking"];
         
-        for (name, version) in contracts.iter() {
+        for name in contract_names.iter() {
             client.register_contract(
                 &admin,
                 &String::from_str(&env, name),
                 &Address::generate(&env),
-                &String::from_str(&env, version),
+                &String::from_str(&env, "1.0.0"),
             );
         }
         
