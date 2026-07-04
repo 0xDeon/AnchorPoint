@@ -29,6 +29,10 @@ const providerMock = {
   parseWebhook: jest.fn(),
 };
 
+const webhookServiceMock = {
+  sendKycStatusChanged: jest.fn(),
+};
+
 const cryptoMock = {
   encrypt: jest.fn((v: string) => ({ encryptedData: `${v}:enc`, iv: 'iv1' })),
   decrypt: jest.fn((v: string) => v),
@@ -49,6 +53,11 @@ jest.mock('../../services/kyc-provider.service', () => ({
   kycProvider: providerMock,
 }));
 
+jest.mock('../../services/webhook.service', () => ({
+  __esModule: true,
+  defaultWebhookService: webhookServiceMock,
+}));
+
 jest.mock('../../services/crypto.service', () => ({
   __esModule: true,
   cryptoService: cryptoMock,
@@ -64,11 +73,16 @@ jest.mock('../../utils/logger', () => ({
   },
 }));
 
-jest.mock('@stellar/stellar-sdk', () => ({
-  StrKey: {
-    isValidEd25519PublicKey: jest.fn((account: string) => account === VALID_ACCOUNT),
-  },
-}));
+jest.mock('@stellar/stellar-sdk', () => {
+  const actual = jest.requireActual('@stellar/stellar-sdk');
+  return {
+    ...actual,
+    StrKey: {
+      ...actual.StrKey,
+      isValidEd25519PublicKey: jest.fn((account: string) => account === VALID_ACCOUNT),
+    },
+  };
+});
 
 import { sep12Controller } from './sep12.controller';
 
@@ -83,6 +97,12 @@ const makeRes = (): Response => {
 describe('Sep12Controller', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    webhookServiceMock.sendKycStatusChanged.mockResolvedValue({
+      delivered: true,
+      attempts: 1,
+      statusCode: 200,
+      responseBody: 'ok',
+    });
   });
 
   describe('putCustomer', () => {
@@ -278,7 +298,67 @@ describe('Sep12Controller', () => {
     });
   });
 
-  it('updates customer KYC status via webhook providerRef lookup', async () => {
+  it('updates customer KYC status via webhook providerRef lookup and dispatches a partner webhook', async () => {
+    const req = {
+      headers: { 'x-kyc-signature': 'mock-valid-signature' },
+      body: { providerRef: 'mock_abc', status: 'accepted' },
+    } as unknown as Request;
+    const res = makeRes();
+    const existingCustomer = {
+      id: 'k1',
+      userId: 'u1',
+      provider: 'mock',
+      providerRef: 'mock_abc',
+      status: 'PENDING',
+      createdAt: new Date('2026-03-30T10:00:00.000Z'),
+      updatedAt: new Date('2026-03-30T10:00:00.000Z'),
+      user: { publicKey: VALID_ACCOUNT },
+    };
+    const updatedCustomer = {
+      ...existingCustomer,
+      status: 'ACCEPTED',
+      updatedAt: new Date('2026-03-30T10:05:00.000Z'),
+    };
+
+    providerMock.verifyWebhookSignature.mockReturnValue(true);
+    providerMock.parseWebhook.mockReturnValue({
+      providerRef: 'mock_abc',
+      status: 'ACCEPTED',
+    });
+    prismaMock.kycCustomer.findFirst.mockResolvedValue(existingCustomer);
+    prismaMock.kycCustomer.update.mockResolvedValue(updatedCustomer);
+
+    await sep12Controller.handleWebhook(req, res);
+
+    expect(prismaMock.kycCustomer.findFirst).toHaveBeenCalledWith({
+      where: {
+        provider: 'mock',
+        providerRef: 'mock_abc',
+      },
+      include: {
+        user: {
+          select: {
+            publicKey: true,
+          },
+        },
+      },
+    });
+    expect(prismaMock.kycCustomer.update).toHaveBeenCalledWith({
+      where: { id: 'k1' },
+      data: { status: 'ACCEPTED' },
+      include: {
+        user: {
+          select: {
+            publicKey: true,
+          },
+        },
+      },
+    });
+    expect(webhookServiceMock.sendKycStatusChanged).toHaveBeenCalledWith(updatedCustomer, 'PENDING');
+    expect(res.status).toHaveBeenCalledWith(200);
+  });
+
+  it('does not dispatch a partner webhook when provider status is unchanged', async () => {
     const req = {
       headers: { 'x-kyc-signature': 'mock-valid-signature' },
       body: { providerRef: 'mock_abc', status: 'accepted' },
@@ -290,14 +370,21 @@ describe('Sep12Controller', () => {
       providerRef: 'mock_abc',
       status: 'ACCEPTED',
     });
-    prismaMock.kycCustomer.findFirst.mockResolvedValue({ id: 'k1' });
+    prismaMock.kycCustomer.findFirst.mockResolvedValue({
+      id: 'k1',
+      userId: 'u1',
+      provider: 'mock',
+      providerRef: 'mock_abc',
+      status: 'ACCEPTED',
+      createdAt: new Date('2026-03-30T10:00:00.000Z'),
+      updatedAt: new Date('2026-03-30T10:05:00.000Z'),
+      user: { publicKey: VALID_ACCOUNT },
+    });
 
     await sep12Controller.handleWebhook(req, res);
 
-    expect(prismaMock.kycCustomer.update).toHaveBeenCalledWith({
-      where: { id: 'k1' },
-      data: { status: 'ACCEPTED' },
-    });
+    expect(prismaMock.kycCustomer.update).not.toHaveBeenCalled();
+    expect(webhookServiceMock.sendKycStatusChanged).not.toHaveBeenCalled();
     expect(res.status).toHaveBeenCalledWith(200);
   });
 
@@ -314,5 +401,117 @@ describe('Sep12Controller', () => {
 
     expect(res.status).toHaveBeenCalledWith(401);
     expect(prismaMock.kycCustomer.update).not.toHaveBeenCalled();
+  });
+
+  describe('confirmUpload', () => {
+    it('returns 200 when session account matches record account', async () => {
+      const req = {
+        params: { id: 'kyc-record-1' },
+        user: { publicKey: 'GACC' },
+      } as unknown as Request;
+      const res = makeRes();
+
+      prismaMock.kycCustomer.findUnique.mockResolvedValue({
+        id: 'kyc-record-1',
+        user: { publicKey: 'GACC' },
+      });
+
+      await sep12Controller.confirmUpload(req as any, res);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+    });
+
+    it('returns 403 when session account does not match record account', async () => {
+      const req = {
+        params: { id: 'kyc-record-1' },
+        user: { publicKey: 'GDIFF' },
+      } as unknown as Request;
+      const res = makeRes();
+
+      prismaMock.kycCustomer.findUnique.mockResolvedValue({
+        id: 'kyc-record-1',
+        user: { publicKey: 'GACC' },
+      });
+
+      await sep12Controller.confirmUpload(req as any, res);
+
+      expect(res.status).toHaveBeenCalledWith(403);
+    });
+
+    it('returns 404 when record does not exist', async () => {
+      const req = {
+        params: { id: 'no-such-record' },
+        user: { publicKey: 'GACC' },
+      } as unknown as Request;
+      const res = makeRes();
+
+      prismaMock.kycCustomer.findUnique.mockResolvedValue(null);
+
+      await sep12Controller.confirmUpload(req as any, res);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+    });
+
+    it('returns 401 when no authenticated user on request', async () => {
+      const req = {
+        params: { id: 'kyc-record-1' },
+      } as unknown as Request;
+      const res = makeRes();
+
+      await sep12Controller.confirmUpload(req as any, res);
+
+      expect(res.status).toHaveBeenCalledWith(401);
+      expect(prismaMock.kycCustomer.findUnique).not.toHaveBeenCalled();
+  describe('getUploadUrl', () => {
+    it('returns 400 when field query param is missing', async () => {
+      const req = {
+        query: {},
+        user: { publicKey: VALID_ACCOUNT },
+      } as unknown as Request;
+      const res = makeRes();
+
+      await sep12Controller.getUploadUrl(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({ error: 'field query parameter is required' });
+    });
+
+    it('returns 200 with upload_url when authenticated and field is provided', async () => {
+      const req = {
+        query: { field: 'id_photo_front' },
+        user: { publicKey: VALID_ACCOUNT },
+      } as unknown as Request;
+      const res = makeRes();
+
+      await sep12Controller.getUploadUrl(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      const payload = (res.json as jest.Mock).mock.calls[0][0];
+      expect(payload).toHaveProperty('upload_url');
+      expect(payload).toHaveProperty('expires_at');
+      expect(payload.field).toBe('id_photo_front');
+      // upload_url must contain a token derived from the account
+      expect(payload.upload_url).toContain('token=');
+    });
+
+    it('returns 401 when no token is provided (route-level auth check)', async () => {
+      // Simulate the authMiddleware rejecting an unauthenticated request by
+      // calling the middleware directly with no Authorization header.
+      const express = require('express');
+      const request = require('supertest');
+      const { authMiddleware: mw } = require('../middleware/auth.middleware');
+
+      const app = express();
+      app.use(express.json());
+      // Mount a lightweight version of the upload-url route.
+      app.get(
+        '/sep12/customer/upload-url',
+        mw,
+        (req: Request, res: Response) => res.status(200).send('ok')
+      );
+
+      const res = await request(app).get('/sep12/customer/upload-url');
+      expect(res.statusCode).toBe(401);
+    });
   });
 });
