@@ -18,6 +18,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import type { UiConfig } from './types';
 import { LogoMark } from './components/LogoMark';
 import { NotificationBell } from './components/NotificationBell';
+import { UserAvatarDropdown } from './components/UserAvatarDropdown';
 import { CopyablePublicKey } from './components/CopyablePublicKey';
 import { FreighterAdapter } from './lib/wallet/FreighterAdapter';
 
@@ -43,13 +44,31 @@ const defaultUiConfig: UiConfig = {
       { key: 'amount', label: 'Amount', required: true, placeholder: '500.00' },
     ],
     withdraw: [
+      { key: 'iban', label: 'IBAN', required: true, placeholder: 'DE89370400440532013000' },
       { key: 'bankAccount', label: 'Bank Account', required: true, placeholder: 'Account number' },
+      { key: 'beneficiaryAddress', label: 'Beneficiary Address', required: true, placeholder: 'Street, city, postal code' },
       { key: 'amount', label: 'Amount', required: true, placeholder: '120.50' },
     ],
     kyc: [
       { key: 'firstName', label: 'First Name', required: true },
       { key: 'lastName', label: 'Last Name', required: true },
       { key: 'country', label: 'Country', required: true },
+      {
+        key: 'id_photo_front',
+        label: 'Government ID (Front)',
+        required: true,
+        type: 'file',
+        accept: 'image/jpeg,image/png,application/pdf',
+        helpText: 'Clear photo of the front of your government-issued ID.',
+      },
+      {
+        key: 'proof_of_address',
+        label: 'Proof of Address',
+        required: true,
+        type: 'file',
+        accept: 'image/jpeg,image/png,application/pdf',
+        helpText: 'Utility bill or bank statement dated within the last 90 days.',
+      },
     ],
   },
 };
@@ -336,6 +355,10 @@ const App = () => {
                 </span>
               ) : null}
             </div>
+            <UserAvatarDropdown
+              onSettings={() => setActiveTab('settings')}
+              onNotifications={() => setActiveTab('notifications')}
+            />
           </div>
         </header>
 
@@ -399,7 +422,13 @@ const App = () => {
                 {activeTab === 'notification-preferences' && (
                   <NotificationPreferences apiBaseUrl={apiBaseUrl} />
                 )}
-                {activeTab === 'kyc' && <KycStatusView uiConfig={uiConfig} />}
+                {activeTab === 'kyc' && (
+                  <KycStatusView
+                    uiConfig={uiConfig}
+                    apiBaseUrl={apiBaseUrl}
+                    account={wallet?.publicKey}
+                  />
+                )}
                 {activeTab === 'settings' && (
                   <SettingsView uiConfig={uiConfig} apiBaseUrl={apiBaseUrl} />
                 )}
