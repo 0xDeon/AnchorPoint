@@ -17,19 +17,25 @@ import relayerRouter from './api/routes/relayer.route';
 import recurringPaymentsRouter from './api/routes/recurring-payments.route';
 import configRouter from './api/routes/config.route';
 import sep31Router from './api/routes/sep31.route';
+import authRouter from './api/routes/auth.route';
 import { errorHandler } from './api/middleware/error.middleware';
 import { metricsMiddleware, connectionTracker } from './api/middleware/metrics.middleware';
+import { securityHeadersMiddleware } from './api/middleware/security-headers.middleware';
 import configService from './services/config.service';
 import feeReportRouter from './api/routes/fee-report.route';
 import { feeReportScheduler } from './workers/fee-report.scheduler';
 import eventRouter from './api/routes/event.route';
 import notificationsRouter from './api/routes/notifications.route';
-import { publicLimiter } from './api/middleware/rate-limit.middleware';
+import { publicLimiter, authLimiter } from './api/middleware/rate-limit.middleware';
 import { notificationService } from './services/notification.service';
 import { createEmailProvider, ConsoleSmsProvider, ConsolePushProvider } from './lib/notifications/providers';
 import { NotificationType } from './services/notification.service';
 import { validateKmsConfigOnStartup } from './lib/key-management.service';
 import queueDashboardRouter from './api/routes/queue-dashboard.route';
+import prisma from './lib/prisma';
+import { redis } from './lib/redis';
+import { validateStorageConfigOnStartup } from './services/storage-provider.service';
+import { uploadExpiryScheduler } from './workers/upload-expiry.scheduler';
 
 // Initialize Notification Engine
 notificationService.registerProvider(NotificationType.EMAIL, createEmailProvider());
@@ -37,6 +43,8 @@ notificationService.registerProvider(NotificationType.SMS, new ConsoleSmsProvide
 notificationService.registerProvider(NotificationType.PUSH, new ConsolePushProvider());
 
 const app = express();
+app.disable('x-powered-by');
+app.use(securityHeadersMiddleware);
 const PORT = config.PORT;
 
 const corsOptions = {
@@ -75,11 +83,11 @@ app.get('/', (req: Request, res: Response) => {
  * /health:
  *   get:
  *     summary: Health check
- *     description: Check if the API server is running
+ *     description: Check if the API server and its backend dependencies (database, Redis) are running
  *     tags: [Health]
  *     responses:
  *       200:
- *         description: Server is healthy
+ *         description: Server and all dependencies are healthy
  *         content:
  *           application/json:
  *             schema:
@@ -91,9 +99,77 @@ app.get('/', (req: Request, res: Response) => {
  *                 timestamp:
  *                   type: string
  *                   format: date-time
+ *                 services:
+ *                   type: object
+ *                   properties:
+ *                     database:
+ *                       type: string
+ *                       example: UP
+ *                     redis:
+ *                       type: string
+ *                       example: UP
+ *       503:
+ *         description: One or more backend dependencies are down
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: string
+ *                   example: DOWN
+ *                 timestamp:
+ *                   type: string
+ *                   format: date-time
+ *                 services:
+ *                   type: object
+ *                   properties:
+ *                     database:
+ *                       type: string
+ *                       example: DOWN
+ *                     redis:
+ *                       type: string
+ *                       example: UP
  */
-app.get('/health', (req: Request, res: Response) => {
-  res.json({ status: 'UP', timestamp: new Date().toISOString() });
+app.get('/health', async (req: Request, res: Response) => {
+  let dbStatus = 'UP';
+  let redisStatus = 'UP';
+  let isHealthy = true;
+
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+  } catch (err) {
+    dbStatus = 'DOWN';
+    isHealthy = false;
+    logger.error('Health Check - Database connection failed:', err);
+  }
+
+  try {
+    const pong = await redis.ping();
+    if (pong !== 'PONG') {
+      redisStatus = 'DOWN';
+      isHealthy = false;
+    }
+  } catch (err) {
+    redisStatus = 'DOWN';
+    isHealthy = false;
+    logger.error('Health Check - Redis connection failed:', err);
+  }
+
+  const responsePayload = {
+    status: isHealthy ? 'UP' : 'DOWN',
+    timestamp: new Date().toISOString(),
+    services: {
+      database: dbStatus,
+      redis: redisStatus,
+    },
+  };
+
+  if (!isHealthy) {
+    return res.status(503).json(responsePayload);
+  }
+
+  return res.status(200).json(responsePayload);
 });
 
 // Swagger API Documentation
@@ -141,6 +217,9 @@ app.use('/api/relayer', relayerRouter);
 // SEP-40 Swap Rates API
 app.use('/sep40', sep40Router);
 
+// SEP-10 Auth routes
+app.use('/sep10', authLimiter, authRouter);
+
 // SEP-12 KYC routes
 app.use('/sep12', sep12Router);
 
@@ -163,6 +242,7 @@ app.use(errorHandler);
 /* istanbul ignore next */
 if (process.env.NODE_ENV !== 'test') {
   validateKmsConfigOnStartup(config);
+  validateStorageConfigOnStartup();
 
   configService.initialize()
     .catch((error) => {
@@ -173,6 +253,7 @@ if (process.env.NODE_ENV !== 'test') {
         logger.info(`Backend service listening at http://localhost:${PORT}`);
         logger.info(`API Documentation available at http://localhost:${PORT}/api-docs`);
         feeReportScheduler.start();
+        uploadExpiryScheduler.start();
       });
     });
 }
