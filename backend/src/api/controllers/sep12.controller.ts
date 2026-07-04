@@ -3,6 +3,7 @@ import { StrKey } from '@stellar/stellar-sdk';
 import prisma from '../../lib/prisma';
 import { cryptoService } from '../../services/crypto.service';
 import { kycProvider, KycStatus } from '../../services/kyc-provider.service';
+import { defaultWebhookService } from '../../services/webhook.service';
 import { KYCStatus } from '@prisma/client';
 import { AuthRequest } from '../middleware/auth.middleware';
 import logger from '../../utils/logger';
@@ -15,8 +16,63 @@ type UploadedFiles = { [fieldname: string]: Array<{ path: string }> };
 const ALLOWED_CONTENT_TYPES = (process.env.UPLOAD_ALLOWED_CONTENT_TYPES ?? 'image/jpeg,image/png,application/pdf').split(',');
 const UPLOAD_URL_EXPIRY_SECONDS = parseInt(process.env.UPLOAD_URL_EXPIRY_SECONDS ?? '900', 10);
 const KEY_PREFIX = process.env.STORAGE_KEY_PREFIX ?? 'kyc';
+const UPLOAD_ID_SUFFIX = '_upload_id';
 const pack = (enc?: { encryptedData: string; iv: string } | null) =>
   enc ? `${enc.iv}|${enc.encryptedData}` : null;
+
+type DocumentResolution =
+  | { documents: Record<string, string>; kycFields: Record<string, string> }
+  | { error: string; status: 400 | 403 };
+
+/** Resolve KYC document references from pre-signed upload IDs and/or multipart files. */
+export function resolveCustomerDocuments(
+  account: string,
+  otherFields: Record<string, string>,
+  uploadedFiles?: UploadedFiles
+): DocumentResolution {
+  const kycFields: Record<string, string> = {};
+  const documents: Record<string, string> = {};
+
+  for (const [key, value] of Object.entries(otherFields)) {
+    if (key.endsWith(UPLOAD_ID_SUFFIX)) {
+      const fieldName = key.slice(0, -UPLOAD_ID_SUFFIX.length);
+      const record = uploadStore.get(value);
+
+      if (!record || record.status === 'EXPIRED') {
+        return { error: `Upload not found or expired for field: ${fieldName}`, status: 400 };
+      }
+      if (record.status !== 'COMPLETED') {
+        return { error: `Upload not confirmed for field: ${fieldName}`, status: 400 };
+      }
+      if (record.account !== account) {
+        return { error: `Upload account does not match request for field: ${fieldName}`, status: 403 };
+      }
+
+      documents[fieldName] =
+        record.storageKey || `${KEY_PREFIX}/${account}/${record.fieldName}/${value}`;
+    } else {
+      kycFields[key] = value;
+    }
+  }
+
+  if (uploadedFiles) {
+    for (const field of Object.keys(uploadedFiles)) {
+      if (!documents[field]) {
+        documents[field] = uploadedFiles[field][0].path;
+      }
+    }
+  }
+
+  return { documents, kycFields };
+}
+
+export const SUPPLEMENTARY_KYC_FIELDS: Record<string, { description: string; optional?: boolean }> = {
+  proof_of_income: { description: 'Proof of income document' },
+  proof_of_address: { description: 'Proof of address document' },
+  occupation: { description: 'Customer occupation', optional: true },
+  employer_name: { description: 'Name of employer', optional: true },
+  tax_id: { description: 'Tax identification number', optional: true },
+};
 
 export class Sep12Controller {
   private toDbStatus(status: KycStatus): KYCStatus {
@@ -78,14 +134,13 @@ export class Sep12Controller {
       }
 
       const uploadedFiles = (req as AuthRequest & { files?: UploadedFiles }).files;
-      const documents: Record<string, string> = {};
-      if (uploadedFiles) {
-        for (const field of Object.keys(uploadedFiles)) {
-          documents[field] = uploadedFiles[field][0].path;
-        }
+      const resolution = resolveCustomerDocuments(account, otherFields, uploadedFiles);
+      if ('error' in resolution) {
+        return res.status(resolution.status).json({ error: resolution.error });
       }
+      const { documents, kycFields } = resolution;
 
-      const extraPayload: Record<string, unknown> = { ...otherFields };
+      const extraPayload: Record<string, unknown> = { ...kycFields };
       if (Object.keys(documents).length > 0) {
         extraPayload.documents = documents;
       }
@@ -114,7 +169,7 @@ export class Sep12Controller {
         firstName: first_name,
         lastName: last_name,
         email: email_address,
-        extraFields: otherFields,
+        extraFields: kycFields,
       };
 
       let providerStatus = KycStatus.PENDING;
@@ -192,6 +247,10 @@ export class Sep12Controller {
         }
       }
 
+      if (customer.status === KYCStatus.PENDING) {
+        responsePayload.fields = SUPPLEMENTARY_KYC_FIELDS;
+      }
+
       res.json(responsePayload);
     } catch (error) {
       logger.error('SEP-12 customer GET failed', {
@@ -241,6 +300,13 @@ export class Sep12Controller {
             provider: kycProvider.providerName,
             providerRef: event.providerRef,
           },
+          include: {
+            user: {
+              select: {
+                publicKey: true,
+              },
+            },
+          },
         });
       }
 
@@ -249,14 +315,37 @@ export class Sep12Controller {
           where: { publicKey: event.account },
           include: { kycCustomer: true },
         });
-        targetCustomer = user?.kycCustomer ?? null;
+        targetCustomer = user?.kycCustomer
+          ? { ...user.kycCustomer, user: { publicKey: user.publicKey } }
+          : null;
       }
 
       if (!targetCustomer) return res.status(404).json({ error: 'Customer not found' });
 
-      await prisma.kycCustomer.update({
+      const nextStatus = this.toDbStatus(event.status);
+      const previousStatus = targetCustomer.status;
+
+      if (previousStatus === nextStatus) {
+        return res.status(200).send('OK');
+      }
+
+      const updatedCustomer = await prisma.kycCustomer.update({
         where: { id: targetCustomer.id },
-        data: { status: this.toDbStatus(event.status) },
+        data: { status: nextStatus },
+        include: {
+          user: {
+            select: {
+              publicKey: true,
+            },
+          },
+        },
+      });
+
+      defaultWebhookService.sendKycStatusChanged(updatedCustomer, previousStatus).catch((error) => {
+        logger.error('SEP-12 KYC status updated but webhook delivery failed', {
+          customerId: updatedCustomer.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
       });
 
       res.status(200).send('OK');
@@ -278,81 +367,74 @@ export class Sep12Controller {
    * (e.g. `id_photo_front`).
    */
   async getUploadUrl(req: AuthRequest, res: Response) {
-    try {
-      const field = req.query.field as string | undefined;
-      if (!field) {
-        return res.status(400).json({ error: 'field query parameter is required' });
-      }
+    if (req.method === 'POST') {
+      try {
+        const { account, field_name, content_type, file_size } = req.body as Record<string, string>;
 
-      // The authenticated public key is available via req.user (enforced by authMiddleware).
-      const account = req.user!.publicKey;
+        if (!account || !field_name || !content_type || !file_size) {
+          return res.status(400).json({ error: 'account, field_name, content_type, and file_size are required' });
+        }
 
-      // Generate a signed upload token: in production this would call a cloud
-      // storage pre-sign API.  Here we produce a structured token so the client
-      // knows where and under what name to upload.
-      const expiresAt = Date.now() + 15 * 60 * 1000; // 15-minute window
-      const uploadToken = Buffer.from(
-        JSON.stringify({ account, field, expiresAt })
-      ).toString('base64url');
+        if (!ALLOWED_CONTENT_TYPES.includes(content_type)) {
+          return res.status(400).json({
+            error: `content_type not allowed. Accepted types: ${ALLOWED_CONTENT_TYPES.join(', ')}`,
+          });
+        }
 
-      const uploadUrl = `/sep12/customer/upload?token=${uploadToken}`;
+        const maxBytes = config.SEP12_MAX_FILE_SIZE_MB * 1024 * 1024;
+        const fileSizeNum = Number(file_size);
+        if (fileSizeNum > maxBytes) {
+          return res.status(400).json({
+            error: `file_size exceeds maximum allowed size of ${config.SEP12_MAX_FILE_SIZE_MB} MB`,
+          });
+        }
 
-      logger.info('SEP-12 upload-url issued', { account, field });
+        const expiresAt = new Date(Date.now() + UPLOAD_URL_EXPIRY_SECONDS * 1000);
+        const record = uploadStore.create(account, field_name, content_type, expiresAt);
 
-      return res.status(200).json({
-        upload_url: uploadUrl,
-        expires_at: new Date(expiresAt).toISOString(),
-        field,
+        const url = await storageProvider.generatePresignedPutUrl(record.storageKey, content_type, UPLOAD_URL_EXPIRY_SECONDS);
 
-  /**
-   * POST /sep12/customer/upload-url
-   * Issues a pre-signed PUT URL for direct client-to-storage upload.
-   * Validates file_size against SEP12_MAX_FILE_SIZE_MB (issue #549).
-   */
-  async getUploadUrl(req: AuthRequest, res: Response) {
-    try {
-      const { account, field_name, content_type, file_size } = req.body as Record<string, string>;
+        logger.info('SEP-12 upload-url issued', { account, field_name, uploadId: record.uploadId });
 
-      if (!account || !field_name || !content_type || !file_size) {
-        return res.status(400).json({ error: 'account, field_name, content_type, and file_size are required' });
-      }
-
-      if (!ALLOWED_CONTENT_TYPES.includes(content_type)) {
-        return res.status(400).json({
-          error: `content_type not allowed. Accepted types: ${ALLOWED_CONTENT_TYPES.join(', ')}`,
+        return res.status(200).json({
+          upload_id: record.uploadId,
+          url,
+          expires_at: expiresAt.toISOString(),
         });
-      }
-
-      const maxBytes = config.SEP12_MAX_FILE_SIZE_MB * 1024 * 1024;
-      const fileSizeNum = Number(file_size);
-      if (fileSizeNum > maxBytes) {
-        return res.status(400).json({
-          error: `file_size exceeds maximum allowed size of ${config.SEP12_MAX_FILE_SIZE_MB} MB`,
+      } catch (error) {
+        logger.error('SEP-12 upload-url failed', {
+          error: error instanceof Error ? error.message : 'Unknown error',
         });
+        return res.status(500).json({ error: 'Internal Server Error' });
       }
+    } else {
+      try {
+        const field = req.query.field as string | undefined;
+        if (!field) {
+          return res.status(400).json({ error: 'field query parameter is required' });
+        }
 
-      const expiresAt = new Date(Date.now() + UPLOAD_URL_EXPIRY_SECONDS * 1000);
-      const record = uploadStore.create(account, field_name, '', content_type, expiresAt);
-      const storageKey = `${KEY_PREFIX}/${account}/${field_name}/${record.uploadId}`;
-      uploadStore.setStatus(record.uploadId, 'PENDING');
-      // Persist the computed storage key back onto the record via a second set
-      const storedRecord = uploadStore.get(record.uploadId)!;
-      (storedRecord as any).storageKey = storageKey;
+        const account = req.user!.publicKey;
+        const expiresAt = Date.now() + 15 * 60 * 1000;
+        const uploadToken = Buffer.from(
+          JSON.stringify({ account, field, expiresAt })
+        ).toString('base64url');
 
-      const url = await storageProvider.generatePresignedPutUrl(storageKey, content_type, UPLOAD_URL_EXPIRY_SECONDS);
+        const uploadUrl = `/sep12/customer/upload?token=${uploadToken}`;
 
-      logger.info('SEP-12 upload-url issued', { account, field_name, uploadId: record.uploadId });
+        logger.info('SEP-12 upload-url issued', { account, field });
 
-      return res.status(200).json({
-        upload_id: record.uploadId,
-        url,
-        expires_at: expiresAt.toISOString(),
-      });
-    } catch (error) {
-      logger.error('SEP-12 upload-url failed', {
-        error: error instanceof Error ? error.message : 'Unknown error',
-      });
-      return res.status(500).json({ error: 'Internal Server Error' });
+        return res.status(200).json({
+          upload_url: uploadUrl,
+          expires_at: new Date(expiresAt).toISOString(),
+          field,
+        });
+      } catch (error) {
+        logger.error('SEP-12 upload-url GET failed', {
+          error: error instanceof Error ? error.message : 'Unknown error',
+        });
+        return res.status(500).json({ error: 'Internal Server Error' });
+      }
     }
   }
 
@@ -368,6 +450,10 @@ export class Sep12Controller {
         return res.status(400).json({ error: 'upload_id and account are required' });
       }
 
+      if (req.user && req.user.publicKey !== account) {
+        return res.status(403).json({ error: 'Forbidden: session account does not match request account' });
+      }
+
       const record = uploadStore.get(upload_id);
 
       if (!record || record.status === 'EXPIRED') {
@@ -378,7 +464,9 @@ export class Sep12Controller {
         return res.status(403).json({ error: 'account does not match upload record' });
       }
 
-      const exists = await storageProvider.objectExists((record as any).storageKey ?? `${KEY_PREFIX}/${account}/${record.fieldName}/${upload_id}`);
+      const exists = await storageProvider.objectExists(
+        record.storageKey || `${KEY_PREFIX}/${account}/${record.fieldName}/${upload_id}`
+      );
       if (!exists) {
         return res.status(422).json({ error: 'File not found in storage; upload may not have completed' });
       }

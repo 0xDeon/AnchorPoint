@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import { generateStorageKey } from '../utils/storage-key';
 
 export type UploadStatus = 'PENDING' | 'COMPLETED' | 'EXPIRED';
 
@@ -16,8 +17,9 @@ export interface UploadRecord {
 const records = new Map<string, UploadRecord>();
 
 export const uploadStore = {
-  create(account: string, fieldName: string, storageKey: string, contentType: string, expiresAt: Date): UploadRecord {
+  create(account: string, fieldName: string, contentType: string, expiresAt: Date): UploadRecord {
     const uploadId = randomUUID();
+    const storageKey = generateStorageKey(account, fieldName, uploadId);
     const record: UploadRecord = { uploadId, account, fieldName, storageKey, contentType, expiresAt, status: 'PENDING' };
     records.set(uploadId, record);
     return record;
@@ -30,6 +32,16 @@ export const uploadStore = {
   setStatus(uploadId: string, status: UploadStatus): void {
     const r = records.get(uploadId);
     if (r) r.status = status;
+  },
+
+  setStorageKey(uploadId: string, storageKey: string): void {
+    const r = records.get(uploadId);
+    if (r) r.storageKey = storageKey;
+  },
+
+  /** Test helper: clear all in-memory records. */
+  _reset(): void {
+    records.clear();
   },
 
   expireStale(): number {

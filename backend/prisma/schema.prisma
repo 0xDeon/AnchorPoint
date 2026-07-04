@@ -6,7 +6,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
@@ -137,7 +137,7 @@ model Transaction {
   feeAssetCode        String?
   feeType             String?
 
-  // SEP-31 specific fields (nullable for backward compatibility)
+  // SEP-31 specific fields
   senderInfo          Json?
   receiverInfo        Json?
   callbackUrl         String?
@@ -231,6 +231,7 @@ model KycCustomer {
 
   @@index([provider, providerRef])
   @@index([userId])
+  @@index([status])
 }
 
 model Quote {

@@ -32,6 +32,10 @@ import { createEmailProvider, ConsoleSmsProvider, ConsolePushProvider } from './
 import { NotificationType } from './services/notification.service';
 import { validateKmsConfigOnStartup } from './lib/key-management.service';
 import queueDashboardRouter from './api/routes/queue-dashboard.route';
+import prisma from './lib/prisma';
+import { redis } from './lib/redis';
+import { validateStorageConfigOnStartup } from './services/storage-provider.service';
+import { uploadExpiryScheduler } from './workers/upload-expiry.scheduler';
 
 // Initialize Notification Engine
 notificationService.registerProvider(NotificationType.EMAIL, createEmailProvider());
@@ -79,11 +83,11 @@ app.get('/', (req: Request, res: Response) => {
  * /health:
  *   get:
  *     summary: Health check
- *     description: Check if the API server is running
+ *     description: Check if the API server and its backend dependencies (database, Redis) are running
  *     tags: [Health]
  *     responses:
  *       200:
- *         description: Server is healthy
+ *         description: Server and all dependencies are healthy
  *         content:
  *           application/json:
  *             schema:
@@ -95,9 +99,77 @@ app.get('/', (req: Request, res: Response) => {
  *                 timestamp:
  *                   type: string
  *                   format: date-time
+ *                 services:
+ *                   type: object
+ *                   properties:
+ *                     database:
+ *                       type: string
+ *                       example: UP
+ *                     redis:
+ *                       type: string
+ *                       example: UP
+ *       503:
+ *         description: One or more backend dependencies are down
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: string
+ *                   example: DOWN
+ *                 timestamp:
+ *                   type: string
+ *                   format: date-time
+ *                 services:
+ *                   type: object
+ *                   properties:
+ *                     database:
+ *                       type: string
+ *                       example: DOWN
+ *                     redis:
+ *                       type: string
+ *                       example: UP
  */
-app.get('/health', (req: Request, res: Response) => {
-  res.json({ status: 'UP', timestamp: new Date().toISOString() });
+app.get('/health', async (req: Request, res: Response) => {
+  let dbStatus = 'UP';
+  let redisStatus = 'UP';
+  let isHealthy = true;
+
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+  } catch (err) {
+    dbStatus = 'DOWN';
+    isHealthy = false;
+    logger.error('Health Check - Database connection failed:', err);
+  }
+
+  try {
+    const pong = await redis.ping();
+    if (pong !== 'PONG') {
+      redisStatus = 'DOWN';
+      isHealthy = false;
+    }
+  } catch (err) {
+    redisStatus = 'DOWN';
+    isHealthy = false;
+    logger.error('Health Check - Redis connection failed:', err);
+  }
+
+  const responsePayload = {
+    status: isHealthy ? 'UP' : 'DOWN',
+    timestamp: new Date().toISOString(),
+    services: {
+      database: dbStatus,
+      redis: redisStatus,
+    },
+  };
+
+  if (!isHealthy) {
+    return res.status(503).json(responsePayload);
+  }
+
+  return res.status(200).json(responsePayload);
 });
 
 // Swagger API Documentation
@@ -170,6 +242,7 @@ app.use(errorHandler);
 /* istanbul ignore next */
 if (process.env.NODE_ENV !== 'test') {
   validateKmsConfigOnStartup(config);
+  validateStorageConfigOnStartup();
 
   configService.initialize()
     .catch((error) => {
@@ -180,6 +253,7 @@ if (process.env.NODE_ENV !== 'test') {
         logger.info(`Backend service listening at http://localhost:${PORT}`);
         logger.info(`API Documentation available at http://localhost:${PORT}/api-docs`);
         feeReportScheduler.start();
+        uploadExpiryScheduler.start();
       });
     });
 }

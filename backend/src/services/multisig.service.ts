@@ -253,16 +253,18 @@ class MultisigService {
   ): Promise<MultisigTransactionDetails[]> {
     const transactions = await prisma.multisigTransaction.findMany({
       where: {
-        requiredSigners: {
-          array_contains: signerPublicKey,
-        },
         ...(status && { status }),
       },
       include: { signatures: true },
       orderBy: { createdAt: 'desc' },
     });
 
-    return transactions.map(tx => this.formatTransactionDetails(tx));
+    return transactions
+      .filter(tx => {
+        const signers = tx.requiredSigners as any;
+        return Array.isArray(signers) && signers.includes(signerPublicKey);
+      })
+      .map(tx => this.formatTransactionDetails(tx));
   }
 
   /**
@@ -271,9 +273,6 @@ class MultisigService {
   async getPendingForSigner(signerPublicKey: string): Promise<MultisigTransactionDetails[]> {
     const transactions = await prisma.multisigTransaction.findMany({
       where: {
-        requiredSigners: {
-          array_contains: signerPublicKey,
-        },
         status: {
           in: [MultisigStatus.PENDING, MultisigStatus.PARTIALLY_SIGNED],
         },
@@ -288,7 +287,11 @@ class MultisigService {
 
     // Filter out transactions where the signer has already signed
     return transactions
-      .filter(tx => !tx.signatures.some(sig => sig.signerPublicKey === signerPublicKey))
+      .filter(tx => {
+        const signers = tx.requiredSigners as any;
+        return Array.isArray(signers) && signers.includes(signerPublicKey);
+      })
+      .filter(tx => !tx.signatures.some((sig: any) => sig.signerPublicKey === signerPublicKey))
       .map(tx => this.formatTransactionDetails(tx));
   }
 
