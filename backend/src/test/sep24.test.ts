@@ -10,8 +10,11 @@ jest.mock('crypto', () => {
 });
 
 jest.mock('../lib/prisma', () => ({
-  quote: {
-    findUnique: jest.fn(),
+  __esModule: true,
+  default: {
+    quote: {
+      findUnique: jest.fn(),
+    },
   },
 }));
 
@@ -30,6 +33,7 @@ function buildApp(): Express {
 const app = buildApp();
 const BASE = '/sep24/transactions';
 const BASE_URL = 'http://localhost:4200';
+const VALID_ACCOUNT = 'GCM5WPR4DDR24FSAX5LIEM4J7AI3KOWJYANSXEPKYXCSZOTAYXE75AFN';
 
 beforeEach(() => {
   process.env.INTERACTIVE_URL = BASE_URL;
