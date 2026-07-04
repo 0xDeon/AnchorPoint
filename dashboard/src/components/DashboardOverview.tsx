@@ -35,14 +35,14 @@ export const DashboardOverview = ({ uiConfig }: { uiConfig: UiConfig }) => (
           <LogoMark uiConfig={uiConfig} />
           <div>
             <p className="font-medium">{uiConfig.brandName}</p>
-            <p className="text-sm text-slate-500">
+            <p className="text-sm text-slate-400">
               {uiConfig.supportEmail ?? 'Support contact not configured'}
             </p>
           </div>
         </div>
         <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <div className="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
-            <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Primary</p>
+          <div className="rounded-lg border border-slate-600 bg-slate-950/50 p-3">
+            <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Primary</p>
             <div className="mt-3 flex items-center gap-3">
               <span
                 className="h-6 w-6 rounded-full border border-white/10"
@@ -54,8 +54,8 @@ export const DashboardOverview = ({ uiConfig }: { uiConfig: UiConfig }) => (
               </span>
             </div>
           </div>
-          <div className="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
-            <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Accent</p>
+          <div className="rounded-lg border border-slate-600 bg-slate-950/50 p-3">
+            <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Accent</p>
             <div className="mt-3 flex items-center gap-3">
               <span
                 className="h-6 w-6 rounded-full border border-white/10"

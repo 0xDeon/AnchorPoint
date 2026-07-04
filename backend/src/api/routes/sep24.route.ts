@@ -9,8 +9,11 @@ import {
 } from '../../services/kyc.service';
 import prisma from '../../lib/prisma';
 import { isValidStellarPublicKey } from '../../utils/stellar-address';
+import { sep24MetricsMiddleware } from '../middleware/sep24-metrics.middleware';
 
 const router = Router();
+
+router.use(sep24MetricsMiddleware);
 
 interface InteractiveRequest {
   asset_code: string;
@@ -18,6 +21,8 @@ interface InteractiveRequest {
   amount?: string;
   lang?: string;
   quote_id?: string;
+  redirect_url?: string;
+  on_change_callback?: string;
 }
 
 interface InteractiveResponse {
@@ -90,7 +95,19 @@ const hasInvalidAccount = (account: unknown): boolean =>
  *         description: Invalid request parameters
  */
 router.post('/transactions/deposit/interactive', async (req: Request, res: Response) => {
-  const { asset_code, account, amount, lang = 'en', quote_id }: InteractiveRequest = req.body;
+  const { asset_code, account, amount, lang = 'en', quote_id, redirect_url, on_change_callback }: InteractiveRequest = req.body;
+
+  const allowedDomains = process.env.SEP24_ALLOWED_CALLBACK_DOMAINS
+    ? process.env.SEP24_ALLOWED_CALLBACK_DOMAINS.split(',').filter(Boolean)
+    : [];
+
+  if (redirect_url && allowedDomains.length > 0 && !Sep24Service.validateCallbackUrl(redirect_url, allowedDomains)) {
+    return res.status(400).json({ error: 'invalid redirect_url domain' });
+  }
+
+  if (on_change_callback && allowedDomains.length > 0 && !Sep24Service.validateCallbackUrl(on_change_callback, allowedDomains)) {
+    return res.status(400).json({ error: 'invalid on_change_callback domain' });
+  }
 
   if (!asset_code) {
     return res.status(400).json({
@@ -105,6 +122,10 @@ router.post('/transactions/deposit/interactive', async (req: Request, res: Respo
 
   if (hasInvalidAccount(account)) {
     return res.status(400).json(invalidAccountResponse());
+  }
+
+  if (callback !== undefined && !isValidCallbackUrl(callback)) {
+    return res.status(400).json({ error: 'callback must be a valid HTTPS URL' });
   }
 
   if (quote_id) {
@@ -185,7 +206,19 @@ router.post('/transactions/deposit/interactive', async (req: Request, res: Respo
  *         description: Invalid request parameters
  */
 router.post('/transactions/withdraw/interactive', async (req: Request, res: Response) => {
-  const { asset_code, account, amount, lang = 'en', quote_id }: InteractiveRequest = req.body;
+  const { asset_code, account, amount, lang = 'en', quote_id, redirect_url, on_change_callback }: InteractiveRequest = req.body;
+
+  const allowedDomains = process.env.SEP24_ALLOWED_CALLBACK_DOMAINS
+    ? process.env.SEP24_ALLOWED_CALLBACK_DOMAINS.split(',').filter(Boolean)
+    : [];
+
+  if (redirect_url && allowedDomains.length > 0 && !Sep24Service.validateCallbackUrl(redirect_url, allowedDomains)) {
+    return res.status(400).json({ error: 'invalid redirect_url domain' });
+  }
+
+  if (on_change_callback && allowedDomains.length > 0 && !Sep24Service.validateCallbackUrl(on_change_callback, allowedDomains)) {
+    return res.status(400).json({ error: 'invalid on_change_callback domain' });
+  }
 
   if (!asset_code) {
     return res.status(400).json({
@@ -200,6 +233,10 @@ router.post('/transactions/withdraw/interactive', async (req: Request, res: Resp
 
   if (hasInvalidAccount(account)) {
     return res.status(400).json(invalidAccountResponse());
+  }
+
+  if (callback !== undefined && !isValidCallbackUrl(callback)) {
+    return res.status(400).json({ error: 'callback must be a valid HTTPS URL' });
   }
 
   if (quote_id) {
