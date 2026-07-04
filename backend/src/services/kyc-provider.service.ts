@@ -103,11 +103,20 @@ class MockKycProvider implements IKycProvider {
       };
     }
 
+    if (data.email && data.email.includes('pending')) {
+      return {
+        success: true,
+        providerRef: `mock_${Date.now()}`,
+        status: KycStatus.PENDING,
+        message: 'Customer submitted successfully. Pending review.',
+      };
+    }
+
     return {
       success: true,
       providerRef: `mock_${Date.now()}`,
-      status: KycStatus.PENDING,
-      message: 'Customer submitted successfully. Pending review.',
+      status: KycStatus.ACCEPTED,
+      message: 'Customer approved automatically.',
     };
   }
 

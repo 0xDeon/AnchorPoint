@@ -1,11 +1,18 @@
+process.env.SIGNING_KEY = 'GBBD47IF6LWLVNC7F7YSACOA73YI4COI3V5O2S46F7S44GUL44YQY4O2';
 import request from 'supertest';
 import nock from 'nock';
 import { Keypair } from '@stellar/stellar-sdk';
+import prisma from '../lib/prisma';
 import app from '../index';
 
 // Mock problematic services and middleware
 jest.mock('../api/middleware/auth.middleware', () => ({
-  authMiddleware: (req: any, res: any, next: any) => next(),
+  authMiddleware: (req: any, res: any, next: any) => {
+    req.user = {
+      publicKey: req.body?.account || req.query?.account || 'GB7KUA47QKRI6Q6X7C3HOC2HEP6VJQRQWQYQF66VJPHJRVMEDJOVML6K'
+    };
+    next();
+  },
   AuthRequest: {},
 }));
 
@@ -25,16 +32,44 @@ jest.mock('../services/redis.service', () => ({
   }
 }));
 
-describe('AnchorPoint E2E Tests - Cross-Border Payment Flow', () => {
+const hasPostgresDatasource = /^postgres(ql)?:\/\//i.test(process.env.DATABASE_URL || '');
+const e2eSuite = hasPostgresDatasource ? describe : describe.skip;
+
+e2eSuite('AnchorPoint E2E Tests - Cross-Border Payment Flow', () => {
   const clientKeypair = Keypair.random();
   const clientPublicKey = clientKeypair.publicKey();
   let authToken = '';
   let quoteId = '';
   let sep31TransactionId = '';
+  let callbackCount = 0;
 
-  beforeAll(() => {
+  beforeAll(async () => {
+    // Keep the DB deterministic per run.
+    await prisma.transaction.deleteMany();
+    await prisma.quote.deleteMany();
+    await prisma.kycCustomer.deleteMany();
+    await prisma.user.deleteMany();
+
     // Clean up any existing mocks
     nock.cleanAll();
+
+    const originalFetch = global.fetch;
+    jest.spyOn(global, 'fetch').mockImplementation((url, init) => {
+      const urlStr = url.toString();
+      if (urlStr.includes('example.com') || urlStr.includes('merchant.example.com')) {
+        callbackCount++;
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ ok: true }),
+        } as any);
+      }
+      return originalFetch(url, init);
+    });
+  });
+
+  afterAll(async () => {
+    await prisma.$disconnect();
   });
 
   afterEach(() => {

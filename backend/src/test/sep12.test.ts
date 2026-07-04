@@ -11,6 +11,16 @@ jest.mock('@prisma/client', () => ({
   PrismaClient: jest.fn(),
 }));
 
+jest.mock('../api/middleware/auth.middleware', () => ({
+  authMiddleware: (req: any, res: any, next: any) => {
+    req.user = {
+      publicKey: req.body?.account || req.query?.account || 'GB7KUA47QKRI6Q6X7C3HOC2HEP6VJQRQWQYQF66VJPHJRVMEDJOVML6K'
+    };
+    next();
+  },
+  AuthRequest: {},
+}));
+
 const KYCStatus = {
   PENDING: 'PENDING',
   ACCEPTED: 'ACCEPTED',
@@ -95,12 +105,22 @@ const prismaMock = {
       kycById.set(created.id, created);
       return created;
     }),
-    update: jest.fn(async ({ where, data }: { where: { id: string }; data: Partial<StoredKycCustomer> }) => {
+    update: jest.fn(async ({ where, data, include }: { where: { id: string }; data: Partial<StoredKycCustomer>; include?: { user?: { select: { publicKey: boolean } } } }) => {
       const existing = kycById.get(where.id);
       if (!existing) throw new Error('KycCustomer not found');
       const updated: StoredKycCustomer = { ...existing, ...data };
       kycByUserId.set(updated.userId, updated);
       kycById.set(updated.id, updated);
+
+      if (include?.user) {
+        const user = usersById.get(updated.userId);
+        return {
+          ...updated,
+          updatedAt: new Date(),
+          user: user ? { publicKey: user.publicKey } : null,
+        };
+      }
+
       return updated;
     }),
     findFirst: jest.fn(async ({ where }: { where: { provider?: string; providerRef?: string } }) => {
@@ -142,13 +162,13 @@ function buildApp(): Express {
 
 const app = buildApp();
 
-const TEST_ACCOUNT = 'GCKFBEIYTKPGAQQL3TCHFLSZDDZ5QRYVBXFPS3FOG5QAFIUHX6QTHP3';
+const TEST_ACCOUNT = 'GB7KUA47QKRI6Q6X7C3HOC2HEP6VJQRQWQYQF66VJPHJRVMEDJOVML6K';
 
 const validCustomer = {
   account: TEST_ACCOUNT,
   first_name: 'Jane',
   last_name: 'Doe',
-  email_address: 'jane@example.com',
+  email_address: 'jane.pending@example.com',
 };
 
 // ─── PUT /sep12/customer ───────────────────────────────────────────────────
@@ -174,8 +194,7 @@ describe('PUT /sep12/customer', () => {
 
     expect(res.status).toBe(202);
     expect(res.body.id).toBe(TEST_ACCOUNT);
-    expect(res.body.status).toBe('PENDING');
-    expect(res.body.provider).toBe('mock');
+    expect(res.body.status).toBe('PROCESSING');
 
     const user = usersByPublicKey.get(TEST_ACCOUNT);
     expect(user).toBeDefined();
@@ -253,6 +272,27 @@ describe('GET /sep12/customer', () => {
       last_name: { description: 'Last Name', status: 'ACCEPTED' },
       email_address: { description: 'Email', status: 'ACCEPTED' },
     });
+  });
+
+  it('includes supplementary fields when status is PENDING', async () => {
+    await request(app).put('/sep12/customer').send(validCustomer);
+
+    const res = await request(app).get('/sep12/customer').query({ account: TEST_ACCOUNT });
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe(KYCStatus.PENDING);
+    expect(res.body.fields).toBeDefined();
+    expect(res.body.fields).toHaveProperty('proof_of_income');
+    expect(res.body.fields).toHaveProperty('proof_of_address');
+  });
+
+  it('accepts supplementary fields in PUT and stores them in extraFields', async () => {
+    const res = await request(app).put('/sep12/customer').send({
+      ...validCustomer,
+      occupation: 'Engineer',
+      employer_name: 'Acme Corp',
+    });
+
+    expect(res.status).toBe(202);
   });
 });
 

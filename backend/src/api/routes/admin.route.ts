@@ -132,13 +132,11 @@ router.patch('/transactions/:id', async (req: Request, res: Response) => {
     const { id } = req.params;
     const { status, stellar_transaction_id, external_transaction_id, amount_out, amount_fee } = req.body;
 
-    const updateData: any = { status };
-    if (stellar_transaction_id) updateData.stellar_transaction_id = stellar_transaction_id;
-    if (external_transaction_id) updateData.external_transaction_id = external_transaction_id;
-    if (amount_out) updateData.amount_out = amount_out;
-    if (amount_fee) updateData.amount_fee = amount_fee;
-
-    const updatedTransaction = await sep31Service.updateStatus(id, status);
+    const updatedTransaction = await sep31Service.updateStatus(id, status, undefined, {
+      stellarTxId: stellar_transaction_id,
+      externalId: external_transaction_id,
+      feeAmount: amount_fee,
+    });
 
     res.json({ message: 'Transaction status updated successfully', transaction: updatedTransaction });
   } catch (error: any) {

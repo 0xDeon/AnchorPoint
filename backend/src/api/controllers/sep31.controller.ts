@@ -82,6 +82,7 @@ export const createTransaction = async (
       senderInfo: sender_info,
       receiverInfo: receiver_info,
       callbackUrl: callback,
+      userPublicKey: req.user?.publicKey,
     });
 
     return res.status(201).json({
