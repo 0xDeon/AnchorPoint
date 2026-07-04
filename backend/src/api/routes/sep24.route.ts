@@ -10,10 +10,23 @@ import {
 import prisma from '../../lib/prisma';
 import { isValidStellarPublicKey } from '../../utils/stellar-address';
 import { sep24MetricsMiddleware } from '../middleware/sep24-metrics.middleware';
+import { Sep24Service } from '../../services/sep24.service';
 
 const router = Router();
 
 router.use(sep24MetricsMiddleware);
+
+const ALLOWED_CALLBACK_PROTOCOLS = ['https:'];
+
+function isValidCallbackUrl(callback: unknown): boolean {
+  if (typeof callback !== 'string') return false;
+  try {
+    const url = new URL(callback);
+    return ALLOWED_CALLBACK_PROTOCOLS.includes(url.protocol);
+  } catch {
+    return false;
+  }
+}
 
 interface InteractiveRequest {
   asset_code: string;
@@ -23,6 +36,7 @@ interface InteractiveRequest {
   quote_id?: string;
   redirect_url?: string;
   on_change_callback?: string;
+  callback?: string;
 }
 
 interface InteractiveResponse {
@@ -95,7 +109,7 @@ const hasInvalidAccount = (account: unknown): boolean =>
  *         description: Invalid request parameters
  */
 router.post('/transactions/deposit/interactive', async (req: Request, res: Response) => {
-  const { asset_code, account, amount, lang = 'en', quote_id, redirect_url, on_change_callback }: InteractiveRequest = req.body;
+  const { asset_code, account, amount, lang = 'en', quote_id, redirect_url, on_change_callback, callback }: InteractiveRequest = req.body;
 
   const allowedDomains = process.env.SEP24_ALLOWED_CALLBACK_DOMAINS
     ? process.env.SEP24_ALLOWED_CALLBACK_DOMAINS.split(',').filter(Boolean)
@@ -206,7 +220,7 @@ router.post('/transactions/deposit/interactive', async (req: Request, res: Respo
  *         description: Invalid request parameters
  */
 router.post('/transactions/withdraw/interactive', async (req: Request, res: Response) => {
-  const { asset_code, account, amount, lang = 'en', quote_id, redirect_url, on_change_callback }: InteractiveRequest = req.body;
+  const { asset_code, account, amount, lang = 'en', quote_id, redirect_url, on_change_callback, callback }: InteractiveRequest = req.body;
 
   const allowedDomains = process.env.SEP24_ALLOWED_CALLBACK_DOMAINS
     ? process.env.SEP24_ALLOWED_CALLBACK_DOMAINS.split(',').filter(Boolean)
