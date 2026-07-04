@@ -17,14 +17,16 @@ import relayerRouter from './api/routes/relayer.route';
 import recurringPaymentsRouter from './api/routes/recurring-payments.route';
 import configRouter from './api/routes/config.route';
 import sep31Router from './api/routes/sep31.route';
+import authRouter from './api/routes/auth.route';
 import { errorHandler } from './api/middleware/error.middleware';
 import { metricsMiddleware, connectionTracker } from './api/middleware/metrics.middleware';
+import { securityHeadersMiddleware } from './api/middleware/security-headers.middleware';
 import configService from './services/config.service';
 import feeReportRouter from './api/routes/fee-report.route';
 import { feeReportScheduler } from './workers/fee-report.scheduler';
 import eventRouter from './api/routes/event.route';
 import notificationsRouter from './api/routes/notifications.route';
-import { publicLimiter } from './api/middleware/rate-limit.middleware';
+import { publicLimiter, authLimiter } from './api/middleware/rate-limit.middleware';
 import { notificationService } from './services/notification.service';
 import { createEmailProvider, ConsoleSmsProvider, ConsolePushProvider } from './lib/notifications/providers';
 import { NotificationType } from './services/notification.service';
@@ -32,6 +34,8 @@ import { validateKmsConfigOnStartup } from './lib/key-management.service';
 import queueDashboardRouter from './api/routes/queue-dashboard.route';
 import prisma from './lib/prisma';
 import { redis } from './lib/redis';
+import { validateStorageConfigOnStartup } from './services/storage-provider.service';
+import { uploadExpiryScheduler } from './workers/upload-expiry.scheduler';
 
 // Initialize Notification Engine
 notificationService.registerProvider(NotificationType.EMAIL, createEmailProvider());
@@ -39,6 +43,8 @@ notificationService.registerProvider(NotificationType.SMS, new ConsoleSmsProvide
 notificationService.registerProvider(NotificationType.PUSH, new ConsolePushProvider());
 
 const app = express();
+app.disable('x-powered-by');
+app.use(securityHeadersMiddleware);
 const PORT = config.PORT;
 
 const corsOptions = {
@@ -211,6 +217,9 @@ app.use('/api/relayer', relayerRouter);
 // SEP-40 Swap Rates API
 app.use('/sep40', sep40Router);
 
+// SEP-10 Auth routes
+app.use('/sep10', authLimiter, authRouter);
+
 // SEP-12 KYC routes
 app.use('/sep12', sep12Router);
 
@@ -233,6 +242,7 @@ app.use(errorHandler);
 /* istanbul ignore next */
 if (process.env.NODE_ENV !== 'test') {
   validateKmsConfigOnStartup(config);
+  validateStorageConfigOnStartup();
 
   configService.initialize()
     .catch((error) => {
@@ -243,6 +253,7 @@ if (process.env.NODE_ENV !== 'test') {
         logger.info(`Backend service listening at http://localhost:${PORT}`);
         logger.info(`API Documentation available at http://localhost:${PORT}/api-docs`);
         feeReportScheduler.start();
+        uploadExpiryScheduler.start();
       });
     });
 }

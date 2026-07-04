@@ -105,12 +105,22 @@ const prismaMock = {
       kycById.set(created.id, created);
       return created;
     }),
-    update: jest.fn(async ({ where, data }: { where: { id: string }; data: Partial<StoredKycCustomer> }) => {
+    update: jest.fn(async ({ where, data, include }: { where: { id: string }; data: Partial<StoredKycCustomer>; include?: { user?: { select: { publicKey: boolean } } } }) => {
       const existing = kycById.get(where.id);
       if (!existing) throw new Error('KycCustomer not found');
       const updated: StoredKycCustomer = { ...existing, ...data };
       kycByUserId.set(updated.userId, updated);
       kycById.set(updated.id, updated);
+
+      if (include?.user) {
+        const user = usersById.get(updated.userId);
+        return {
+          ...updated,
+          updatedAt: new Date(),
+          user: user ? { publicKey: user.publicKey } : null,
+        };
+      }
+
       return updated;
     }),
     findFirst: jest.fn(async ({ where }: { where: { provider?: string; providerRef?: string } }) => {
@@ -262,6 +272,27 @@ describe('GET /sep12/customer', () => {
       last_name: { description: 'Last Name', status: 'ACCEPTED' },
       email_address: { description: 'Email', status: 'ACCEPTED' },
     });
+  });
+
+  it('includes supplementary fields when status is PENDING', async () => {
+    await request(app).put('/sep12/customer').send(validCustomer);
+
+    const res = await request(app).get('/sep12/customer').query({ account: TEST_ACCOUNT });
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe(KYCStatus.PENDING);
+    expect(res.body.fields).toBeDefined();
+    expect(res.body.fields).toHaveProperty('proof_of_income');
+    expect(res.body.fields).toHaveProperty('proof_of_address');
+  });
+
+  it('accepts supplementary fields in PUT and stores them in extraFields', async () => {
+    const res = await request(app).put('/sep12/customer').send({
+      ...validCustomer,
+      occupation: 'Engineer',
+      employer_name: 'Acme Corp',
+    });
+
+    expect(res.status).toBe(202);
   });
 });
 
