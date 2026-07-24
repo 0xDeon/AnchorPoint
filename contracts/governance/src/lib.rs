@@ -21,6 +21,9 @@ pub enum GovernanceError {
     VotingClosed = 2,
     AlreadyVoted = 3,
     InvalidPhase = 4,
+    InsufficientSignatures = 5,
+    UnauthorizedSigner = 6,
+    DuplicateSigner = 7,
 }
 
 #[contracttype]
@@ -37,6 +40,8 @@ pub struct Proposal {
 pub enum DataKey {
     Proposal(u32),
     Admin,
+    CouncilSigners,
+    Threshold,
 }
 
 #[contract]
@@ -49,6 +54,26 @@ impl GovernanceContract {
             panic!("already initialized");
         }
         env.storage().instance().set(&DataKey::Admin, &admin);
+    }
+
+    /// Configure the vector of governance council address signers and required threshold (M of N).
+    pub fn set_council(env: Env, admin: Address, signers: Vec<Address>, threshold: u32) {
+        admin.require_auth();
+        let stored_admin: Address = env.storage().instance().get(&DataKey::Admin).expect("admin not set");
+        assert!(admin == stored_admin, "unauthorized");
+        assert!(threshold > 0 && threshold <= signers.len(), "invalid threshold");
+        env.storage().instance().set(&DataKey::CouncilSigners, &signers);
+        env.storage().instance().set(&DataKey::Threshold, &threshold);
+    }
+
+    /// Get configured council signers.
+    pub fn get_council_signers(env: Env) -> Vec<Address> {
+        env.storage().instance().get(&DataKey::CouncilSigners).unwrap_or(Vec::new(&env))
+    }
+
+    /// Get required threshold of signatures.
+    pub fn get_threshold(env: Env) -> u32 {
+        env.storage().instance().get(&DataKey::Threshold).unwrap_or(0)
     }
 
     pub fn transfer_admin(env: Env, admin: Address, new_admin: Address) {
@@ -82,11 +107,60 @@ impl GovernanceContract {
         );
     }
 
-    pub fn execute(env: Env, prop_id: u32) {
+    /// Execute proposal with multi-sig threshold authorization checks.
+    /// Collects signers and verifies valid weight/quorum threshold satisfies requirements.
+    pub fn execute_proposal(env: Env, prop_id: u32, signers: Vec<Address>) -> Result<(), GovernanceError> {
+        let threshold: u32 = env.storage().instance().get(&DataKey::Threshold).unwrap_or(0);
+        let council: Vec<Address> = env.storage().instance().get(&DataKey::CouncilSigners).unwrap_or(Vec::new(&env));
+
+        if threshold > 0 {
+            if signers.len() < threshold {
+                return Err(GovernanceError::InsufficientSignatures);
+            }
+
+            let mut valid_weight: u32 = 0;
+            let mut verified_signers: Vec<Address> = Vec::new(&env);
+
+            for i in 0..signers.len() {
+                let signer = signers.get(i).unwrap();
+                signer.require_auth();
+
+                // Verify signer is a registered council member
+                let mut is_council = false;
+                for j in 0..council.len() {
+                    if council.get(j).unwrap() == signer {
+                        is_council = true;
+                        break;
+                    }
+                }
+                if !is_council {
+                    return Err(GovernanceError::UnauthorizedSigner);
+                }
+
+                // Verify no duplicate signers
+                for k in 0..verified_signers.len() {
+                    if verified_signers.get(k).unwrap() == signer {
+                        return Err(GovernanceError::DuplicateSigner);
+                    }
+                }
+                verified_signers.push_back(signer);
+                valid_weight += 1;
+            }
+
+            if valid_weight < threshold {
+                return Err(GovernanceError::InsufficientSignatures);
+            }
+        }
+
         env.events().publish(
             (symbol_short!("gov"), symbol_short!("executed")),
             (prop_id,),
         );
+        Ok(())
+    }
+
+    pub fn execute(env: Env, prop_id: u32) -> Result<(), GovernanceError> {
+        Self::execute_proposal(env, prop_id, Vec::new(&env))
     }
 
     pub fn cancel(env: Env, admin: Address, prop_id: u32) {
