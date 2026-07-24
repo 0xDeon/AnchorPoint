@@ -170,7 +170,8 @@ impl YieldFarmingDistributor {
             .unwrap_or(0);
 
         if current_ledger > last_update && total_shares > 0 {
-            let integrated_rewards = Self::calculate_rewards_for_period(reward_rate, last_update, current_ledger);
+            let integrated_rewards =
+                Self::calculate_rewards_for_period(reward_rate, last_update, current_ledger);
             let reward_delta = integrated_rewards
                 .checked_mul(PRECISION)
                 .expect("reward overflow");
@@ -234,7 +235,11 @@ impl YieldFarmingDistributor {
 
     /// Calculate the total integrated rewards emitted between two ledger sequences,
     /// properly handling epoch boundaries where the rate decays.
-    fn calculate_rewards_for_period(initial_rate: i128, start_ledger: u32, end_ledger: u32) -> i128 {
+    fn calculate_rewards_for_period(
+        initial_rate: i128,
+        start_ledger: u32,
+        end_ledger: u32,
+    ) -> i128 {
         if start_ledger >= end_ledger {
             return 0;
         }
@@ -288,7 +293,8 @@ impl YieldFarmingDistributor {
                 .instance()
                 .get(&DataKey::RewardRate)
                 .unwrap_or(0);
-            let integrated_rewards = Self::calculate_rewards_for_period(reward_rate, last_update, current_ledger);
+            let integrated_rewards =
+                Self::calculate_rewards_for_period(reward_rate, last_update, current_ledger);
             let reward_delta = integrated_rewards
                 .checked_mul(PRECISION)
                 .expect("reward overflow");
@@ -539,7 +545,8 @@ mod tests {
         amm.set_shares(&user, &10_000); // 100% of pool
 
         // Advance 10 ledgers.
-        env.ledger().set_sequence_number(env.ledger().sequence() + 10);
+        env.ledger()
+            .set_sequence_number(env.ledger().sequence() + 10);
 
         // Expected: 10 ledgers * 1000 rate * (10000/10000) = 10_000
         let pending = dist.pending_rewards(&user);
@@ -558,7 +565,8 @@ mod tests {
         amm.set_shares(&user_a, &7_500); // 75%
         amm.set_shares(&user_b, &2_500); // 25%
 
-        env.ledger().set_sequence_number(env.ledger().sequence() + 10);
+        env.ledger()
+            .set_sequence_number(env.ledger().sequence() + 10);
 
         let pending_a = dist.pending_rewards(&user_a);
         let pending_b = dist.pending_rewards(&user_b);
@@ -579,7 +587,8 @@ mod tests {
         amm.set_total_shares(&10_000);
         amm.set_shares(&user, &10_000);
 
-        env.ledger().set_sequence_number(env.ledger().sequence() + 5);
+        env.ledger()
+            .set_sequence_number(env.ledger().sequence() + 5);
 
         let claimed = dist.claim_rewards(&user);
         assert_eq!(claimed, 5_000); // 5 ledgers * 1000 rate
@@ -603,7 +612,8 @@ mod tests {
         amm.set_total_shares(&10_000);
         amm.set_shares(&user, &0);
 
-        env.ledger().set_sequence_number(env.ledger().sequence() + 10);
+        env.ledger()
+            .set_sequence_number(env.ledger().sequence() + 10);
 
         let claimed = dist.claim_rewards(&user);
         assert_eq!(claimed, 0);
@@ -630,11 +640,13 @@ mod tests {
         amm.set_shares(&user, &1_000);
 
         // Advance 10 ledgers, claim, advance 10 more, check pending.
-        env.ledger().set_sequence_number(env.ledger().sequence() + 10);
+        env.ledger()
+            .set_sequence_number(env.ledger().sequence() + 10);
         let first_claim = dist.claim_rewards(&user);
         assert_eq!(first_claim, 1_000); // 10 * 100
 
-        env.ledger().set_sequence_number(env.ledger().sequence() + 10);
+        env.ledger()
+            .set_sequence_number(env.ledger().sequence() + 10);
         let pending = dist.pending_rewards(&user);
         assert_eq!(pending, 1_000); // another 10 * 100, not doubled
 
@@ -652,7 +664,8 @@ mod tests {
         amm.set_total_shares(&0); // empty pool
         amm.set_shares(&user, &0);
 
-        env.ledger().set_sequence_number(env.ledger().sequence() + 100);
+        env.ledger()
+            .set_sequence_number(env.ledger().sequence() + 100);
 
         assert_eq!(dist.pending_rewards(&user), 0);
         assert_eq!(dist.claim_rewards(&user), 0);
@@ -668,10 +681,12 @@ mod tests {
         amm.set_total_shares(&3);
         amm.set_shares(&user, &1);
 
-        env.ledger().set_sequence_number(env.ledger().sequence() + 1);
+        env.ledger()
+            .set_sequence_number(env.ledger().sequence() + 1);
         assert_eq!(dist.claim_rewards(&user), 0);
 
-        env.ledger().set_sequence_number(env.ledger().sequence() + 2);
+        env.ledger()
+            .set_sequence_number(env.ledger().sequence() + 2);
         assert_eq!(dist.pending_rewards(&user), 1);
     }
 
@@ -686,7 +701,8 @@ mod tests {
         amm.set_total_shares(&-1);
         amm.set_shares(&user, &0);
 
-        env.ledger().set_sequence_number(env.ledger().sequence() + 1);
+        env.ledger()
+            .set_sequence_number(env.ledger().sequence() + 1);
         let _ = dist.pending_rewards(&user);
     }
 
@@ -701,7 +717,8 @@ mod tests {
         amm.set_total_shares(&10);
         amm.set_shares(&user, &11);
 
-        env.ledger().set_sequence_number(env.ledger().sequence() + 1);
+        env.ledger()
+            .set_sequence_number(env.ledger().sequence() + 1);
         let _ = dist.claim_rewards(&user);
     }
 
