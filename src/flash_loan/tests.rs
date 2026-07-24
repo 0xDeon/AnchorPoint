@@ -1,4 +1,5 @@
 #[cfg(test)]
+#[allow(clippy::module_inception)]
 mod tests {
     use crate::{FlashLoanProvider, FlashLoanProviderClient, LoanDetail};
     use soroban_sdk::{
@@ -33,7 +34,7 @@ mod tests {
                 // Transfer back the amount + fee to the provider
                 token_client.transfer(
                     &env.current_contract_address(),
-                    &env.storage()
+                    env.storage()
                         .instance()
                         .get::<_, Address>(&symbol_short!("provider"))
                         .unwrap(),
@@ -100,7 +101,7 @@ mod tests {
                 let token_client = TokenClient::new(&env, &token);
                 token_client.transfer(
                     &env.current_contract_address(),
-                    &env.storage()
+                    env.storage()
                         .instance()
                         .get::<_, Address>(&symbol_short!("provider"))
                         .unwrap(),
@@ -222,7 +223,7 @@ mod tests {
                     .unwrap();
 
                 // Only repay the first loan
-                if loans.len() > 0 {
+                if !loans.is_empty() {
                     let loan = loans.get(0).unwrap();
                     let token_client = TokenClient::new(&env, &loan.token);
                     let total_due = loan.amount + loan.fee;

@@ -57,6 +57,7 @@ pub enum DataKey {
 #[contract]
 pub struct RandomNumberGenerator;
 
+#[allow(deprecated)]
 #[contractimpl]
 impl RandomNumberGenerator {
     /// Initialize the random number generator contract

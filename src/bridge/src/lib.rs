@@ -60,6 +60,7 @@ pub enum DataKey {
 #[contract]
 pub struct Bridge;
 
+#[allow(deprecated)]
 #[contractimpl]
 impl Bridge {
     // -----------------------------------------------------------------------
@@ -560,8 +561,8 @@ mod tests {
         amount: i128,
         op: BridgeOp,
     ) -> BridgeMessage {
-        let message_hash = BytesN::from_array(&env, &[0u8; 32]);
-        let signature = BytesN::from_array(&env, &[0u8; 64]);
+        let message_hash = BytesN::from_array(env, &[0u8; 32]);
+        let signature = BytesN::from_array(env, &[0u8; 64]);
 
         BridgeMessage {
             source_chain,

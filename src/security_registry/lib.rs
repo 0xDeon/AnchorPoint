@@ -69,13 +69,13 @@ mod tests {
         let client = SecurityRegistryClient::new(&env, &contract_id);
 
         client.initialize(&admin);
-        assert_eq!(client.is_paused(), false);
+        assert!(!client.is_paused());
 
         env.mock_all_auths();
         client.pause(&admin);
-        assert_eq!(client.is_paused(), true);
+        assert!(client.is_paused());
 
         client.unpause(&admin);
-        assert_eq!(client.is_paused(), false);
+        assert!(!client.is_paused());
     }
 }

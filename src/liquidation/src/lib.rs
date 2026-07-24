@@ -18,6 +18,7 @@ pub enum DataKey {
 #[contract]
 pub struct LiquidationEngine;
 
+#[allow(deprecated)]
 #[contractimpl]
 impl LiquidationEngine {
     pub fn initialize(env: Env, oracle_id: Address) {

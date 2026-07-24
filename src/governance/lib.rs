@@ -101,6 +101,7 @@ pub struct VoteRecord {
 #[contract]
 pub struct GovernanceContract;
 
+#[allow(deprecated)]
 #[contractimpl]
 impl GovernanceContract {
     /// Initialize the governance contract
@@ -222,10 +223,7 @@ impl GovernanceContract {
             .expect("admin not found");
 
         assert!(caller == admin, "only admin can set quorum");
-        assert!(
-            percentage >= 0 && percentage <= 100,
-            "invalid quorum percentage"
-        );
+        assert!((0..=100).contains(&percentage), "invalid quorum percentage");
 
         env.storage()
             .instance()
@@ -1087,7 +1085,7 @@ mod quadratic_voting_tests {
         let record = record.unwrap();
         assert_eq!(record.votes, 15);
         assert_eq!(record.quadratic_cost, 225); // 15^2
-        assert_eq!(record.support, false); // voted against
+        assert!(!record.support); // voted against
     }
 
     #[test]
@@ -1133,7 +1131,12 @@ pub struct MockToken;
 #[cfg(test)]
 #[contractimpl]
 impl MockToken {
-    pub fn get_past_balance(env: Env, owner: Address, token_id: u64, ledger: u32) -> i128 {
+    pub fn get_past_balance(
+        _env: Env,
+        _owner: Address,
+        _token_id: u64,
+        _ledger: u32,
+    ) -> i128 {
         1_000_000i128
     }
 }

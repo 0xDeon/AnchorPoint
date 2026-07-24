@@ -102,6 +102,7 @@ pub trait EventEmitter {
 /// The payload is the structured `AnchorEvent` enum.
 /// The top-level topic is always `symbol_short!("anchor")` followed by the variant name,
 /// which allows indexers to filter globally for all AnchorPoint events.
+#[allow(deprecated)]
 pub fn emit_event(env: &Env, event: AnchorEvent) {
     let sub_topic = match &event {
         AnchorEvent::Deposit(_) => symbol_short!("deposit"),
@@ -122,8 +123,7 @@ pub fn emit_event(env: &Env, event: AnchorEvent) {
 mod tests {
     use super::*;
     use soroban_sdk::{
-        contract, contractimpl, testutils::Address as _, testutils::Events, vec, FromVal, IntoVal,
-        Val,
+        contract, contractimpl, testutils::Address as _, testutils::Events, vec, IntoVal,
     };
 
     #[contract]

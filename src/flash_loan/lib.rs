@@ -59,6 +59,7 @@ pub trait FlashLoanBatchReceiver {
 #[contract]
 pub struct FlashLoanProvider;
 
+#[allow(deprecated)]
 #[contractimpl]
 impl FlashLoanProvider {
     pub fn set_security_registry(env: soroban_sdk::Env, registry: soroban_sdk::Address) {

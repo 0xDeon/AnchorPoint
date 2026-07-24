@@ -1,6 +1,7 @@
 #![no_std]
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use anchorpoint_amm::{AMMClient, AMM};
     use sep41_token::{TokenContract, TokenContractClient};

@@ -18,6 +18,7 @@ pub enum DataKey {
 #[contract]
 pub struct AMM;
 
+#[allow(deprecated)]
 #[contractimpl]
 impl AMM {
     /// Initializes the AMM pool for a specific pair of tokens.

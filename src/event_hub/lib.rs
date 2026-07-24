@@ -55,6 +55,7 @@ pub struct EventLogEntry {
 #[contract]
 pub struct EventHub;
 
+#[allow(deprecated)]
 #[contractimpl]
 impl EventHub {
     /// Initialize the Event Hub contract

@@ -13,6 +13,7 @@ pub enum DataKey {
 #[contract]
 pub struct KycVerifier;
 
+#[allow(deprecated)]
 #[contractimpl]
 impl KycVerifier {
     pub fn initialize(env: Env, admin: Address, verifier_pubkey: BytesN<32>) {

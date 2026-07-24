@@ -24,6 +24,7 @@ pub enum DataKey {
 #[contract]
 pub struct TokenContract;
 
+#[allow(deprecated)]
 #[contractimpl]
 impl TokenContract {
     pub fn initialize(env: Env, admin: Address, decimals: u32, name: String, symbol: String) {

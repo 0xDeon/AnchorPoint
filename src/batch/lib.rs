@@ -19,9 +19,10 @@ pub struct RetryConfig {
 }
 
 impl RetryConfig {
+    #[allow(clippy::manual_clamp)]
     pub fn validated(self) -> Self {
         RetryConfig {
-            max_attempts: self.max_attempts.max(1).min(5),
+            max_attempts: self.max_attempts.clamp(1, 5),
             delay_ledgers: self.delay_ledgers,
         }
     }
@@ -70,6 +71,7 @@ pub enum DataKey {
 #[contract]
 pub struct BatchExecutor;
 
+#[allow(deprecated)]
 #[contractimpl]
 impl BatchExecutor {
     pub fn initialize(env: Env, admin: Address) {

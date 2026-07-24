@@ -83,6 +83,7 @@ where
 /// * `description` – New description (pass current value to leave unchanged)
 /// * `icon_url`    – New icon URL
 /// * `website`     – New website URL
+#[allow(deprecated)]
 pub fn update<K>(
     env: &Env,
     key: &K,

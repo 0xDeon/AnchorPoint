@@ -94,7 +94,7 @@ impl EscrowTimelock {
 
         // Transfer tokens from sender to this contract
         let token_client = token::Client::new(&e, &details.token);
-        token_client.transfer(&sender, &e.current_contract_address(), &amount);
+        token_client.transfer(&sender, e.current_contract_address(), &amount);
     }
 
     /// Mark conditions as met (can only be called by sender)

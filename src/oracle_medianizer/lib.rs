@@ -56,6 +56,7 @@ pub enum DataKey {
 #[contract]
 pub struct OracleMedianizer;
 
+#[allow(deprecated)]
 #[contractimpl]
 impl OracleMedianizer {
     /// Initialize the oracle medianizer
@@ -299,10 +300,7 @@ impl OracleMedianizer {
             }
         }
 
-        assert!(
-            prices.len() >= min_sources as u32,
-            "insufficient valid price feeds"
-        );
+        assert!(prices.len() >= min_sources, "insufficient valid price feeds");
 
         // Sort prices for median calculation
         prices = Self::sort_prices(&env, prices);
@@ -340,17 +338,14 @@ impl OracleMedianizer {
             }
         }
 
-        assert!(
-            filtered_prices.len() >= min_sources as u32,
-            "too many outliers removed"
-        );
+        assert!(filtered_prices.len() >= min_sources, "too many outliers removed");
 
         // Sort filtered prices
         filtered_prices = Self::sort_prices(&env, filtered_prices);
 
         // Calculate median
         let len = filtered_prices.len();
-        let median = if len % 2 == 0 {
+        let median = if len.is_multiple_of(2) {
             // Even number: average of two middle values
             let mid1 = filtered_prices.get_unchecked(len / 2 - 1);
             let mid2 = filtered_prices.get_unchecked(len / 2);
@@ -478,11 +473,7 @@ impl OracleMedianizer {
         }
 
         // If no previous price, always update
-        if env.storage().instance().has(&DataKey::MedianPrice(asset)) {
-            false
-        } else {
-            true
-        }
+        !env.storage().instance().has(&DataKey::MedianPrice(asset))
     }
 
     /// Sort prices in ascending order (bubble sort for simplicity)

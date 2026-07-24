@@ -29,6 +29,7 @@ pub enum DataKey {
 #[contract]
 pub struct OracleConsumer;
 
+#[allow(deprecated)]
 #[contractimpl]
 impl OracleConsumer {
     /// Initializes the consumer with an admin and the initial oracle source.
@@ -286,7 +287,7 @@ impl OracleConsumer {
             .unwrap_or(DEFAULT_MAX_OBSERVATIONS);
 
         let mut history = Self::get_price_history(env, asset.clone());
-        let last_timestamp = if history.len() > 0 {
+        let last_timestamp = if !history.is_empty() {
             Some(history.get(history.len() - 1).unwrap().timestamp)
         } else {
             None

@@ -67,6 +67,7 @@ pub enum TriggerSource {
 #[contract]
 pub struct CircuitBreaker;
 
+#[allow(deprecated)]
 #[contractimpl]
 impl CircuitBreaker {
     // ── Initialization ────────────────────────────────────────────────────────
@@ -130,7 +131,7 @@ impl CircuitBreaker {
             .get(&DataKey::AuthorizedBots)
             .unwrap_or_else(|| Vec::new(&env));
 
-        assert!((bots.len() as u32) < MAX_BOTS, "bot list is full");
+        assert!(bots.len() < MAX_BOTS, "bot list is full");
 
         for i in 0..bots.len() {
             if bots.get(i).unwrap() == bot {

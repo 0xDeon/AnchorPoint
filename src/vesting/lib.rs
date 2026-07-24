@@ -29,6 +29,8 @@ pub struct Grant {
 #[contract]
 pub struct VestingContract;
 
+#[allow(deprecated)]
+#[allow(clippy::too_many_arguments)]
 #[contractimpl]
 impl VestingContract {
     /// Initializes the contract with an admin.
@@ -53,6 +55,7 @@ impl VestingContract {
 
     /// Creates a new vesting grant.
     /// The admin must provide the tokens upfront.
+    #[allow(clippy::too_many_arguments)]
     pub fn create_grant(
         env: Env,
         beneficiary: Address,
@@ -76,7 +79,7 @@ impl VestingContract {
 
         // Deposit tokens into the contract
         let token_client = token::Client::new(&env, &token);
-        token_client.transfer(&admin, &env.current_contract_address(), &amount);
+        token_client.transfer(&admin, env.current_contract_address(), &amount);
 
         let id: u32 = env
             .storage()

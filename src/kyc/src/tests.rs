@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 use super::*;
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
@@ -41,7 +43,7 @@ fn inject_kyc(env: &Env, contract_id: &Address, user: &Address, expires_at: u64)
 /// and the storage entry is fully removed.
 #[test]
 fn test_revoke_kyc_removes_record() {
-    let (env, contract_id, admin) = setup(true);
+    let (env, contract_id, _admin) = setup(true);
     let client = KycVerifierClient::new(&env, &contract_id);
 
     env.ledger().with_mut(|li| li.timestamp = 1_000);

@@ -35,6 +35,7 @@ const REWARD_PRECISION: i128 = 10_000_000;
 #[contract]
 pub struct StakingContract;
 
+#[allow(deprecated)]
 #[contractimpl]
 impl StakingContract {
     pub fn set_security_registry(env: soroban_sdk::Env, registry: soroban_sdk::Address) {
@@ -96,7 +97,7 @@ impl StakingContract {
     pub fn set_tiers(env: Env, tiers: Vec<LockTier>) {
         let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
         admin.require_auth();
-        assert!(tiers.len() > 0, "need at least one tier");
+        assert!(!tiers.is_empty(), "need at least one tier");
         env.storage().instance().set(&DataKey::Tiers, &tiers);
     }
 
@@ -124,12 +125,12 @@ impl StakingContract {
         assert!(amount > 0, "amount must be positive");
 
         let tiers: Vec<LockTier> = env.storage().instance().get(&DataKey::Tiers).unwrap();
-        assert!((tier_index as u32) < tiers.len(), "invalid tier");
+        assert!(tier_index < tiers.len(), "invalid tier");
         let tier = tiers.get(tier_index).unwrap();
 
         let token_addr: Address = env.storage().instance().get(&DataKey::Token).unwrap();
         let token_client = token::Client::new(&env, &token_addr);
-        token_client.transfer(&user, &env.current_contract_address(), &amount);
+        token_client.transfer(&user, env.current_contract_address(), &amount);
 
         let mut info = Self::get_stake_info(env.clone(), user.clone());
         let current_time = env.ledger().timestamp();
