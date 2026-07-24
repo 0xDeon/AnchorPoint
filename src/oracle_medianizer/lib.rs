@@ -300,7 +300,10 @@ impl OracleMedianizer {
             }
         }
 
-        assert!(prices.len() >= min_sources, "insufficient valid price feeds");
+        assert!(
+            prices.len() >= min_sources,
+            "insufficient valid price feeds"
+        );
 
         // Sort prices for median calculation
         prices = Self::sort_prices(&env, prices);
@@ -338,7 +341,10 @@ impl OracleMedianizer {
             }
         }
 
-        assert!(filtered_prices.len() >= min_sources, "too many outliers removed");
+        assert!(
+            filtered_prices.len() >= min_sources,
+            "too many outliers removed"
+        );
 
         // Sort filtered prices
         filtered_prices = Self::sort_prices(&env, filtered_prices);

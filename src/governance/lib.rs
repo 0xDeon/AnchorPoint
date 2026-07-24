@@ -1131,12 +1131,7 @@ pub struct MockToken;
 #[cfg(test)]
 #[contractimpl]
 impl MockToken {
-    pub fn get_past_balance(
-        _env: Env,
-        _owner: Address,
-        _token_id: u64,
-        _ledger: u32,
-    ) -> i128 {
+    pub fn get_past_balance(_env: Env, _owner: Address, _token_id: u64, _ledger: u32) -> i128 {
         1_000_000i128
     }
 }
