@@ -3,8 +3,8 @@
 #[cfg(test)]
 mod tests {
     use anchorpoint_amm::{AMMClient, AMM};
-    use soroban_sdk::{testutils::Address as _, token::StellarAssetClient, Address, Env, String};
     use sep41_token::{TokenContract, TokenContractClient};
+    use soroban_sdk::{testutils::Address as _, token::StellarAssetClient, Address, Env, String};
 
     // Fails CI if gas increases beyond baseline + ~10% (adjust baseline as needed)
     const MAX_CPU: u64 = 50_000_000;

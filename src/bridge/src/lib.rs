@@ -911,9 +911,10 @@ mod tests {
                 .set(&DataKey::DestinationMinted(chain1, token.clone()), &500i128)
         });
         env.as_contract(&client.address, || {
-            env.storage()
-                .instance()
-                .set(&DataKey::DestinationMinted(chain2, token.clone()), &1000i128)
+            env.storage().instance().set(
+                &DataKey::DestinationMinted(chain2, token.clone()),
+                &1000i128,
+            )
         });
 
         assert_eq!(client.get_collateralization_ratio(&chain1, &token), 20000); // 200%

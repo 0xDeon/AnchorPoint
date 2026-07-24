@@ -115,7 +115,10 @@ impl OracleMedianizer {
             .get(&DataKey::OracleCount)
             .unwrap_or(0);
 
-        env.storage().instance().set(&DataKey::OracleCount, &count.checked_add(1).expect("oracle count overflow"));
+        env.storage().instance().set(
+            &DataKey::OracleCount,
+            &count.checked_add(1).expect("oracle count overflow"),
+        );
 
         // Topic: event name + oracle Address (needed for indexing source changes).
         env.events().publish(
@@ -163,10 +166,8 @@ impl OracleMedianizer {
         }
 
         // Topic: event name only; oracle Address in data.
-        env.events().publish(
-            (symbol_short!("orcl_rm"),),
-            oracle.clone(),
-        );
+        env.events()
+            .publish((symbol_short!("orcl_rm"),), oracle.clone());
         env.events()
             .publish((symbol_short!("oracle"), oracle), symbol_short!("removed"));
     }
@@ -307,13 +308,16 @@ impl OracleMedianizer {
         prices = Self::sort_prices(&env, prices);
 
         // Calculate mean for outlier detection
-        let sum: i128 = prices.iter().fold(0i128, |acc, p| acc.checked_add(p).expect("sum overflow"));
+        let sum: i128 = prices
+            .iter()
+            .fold(0i128, |acc, p| acc.checked_add(p).expect("sum overflow"));
         let mean = sum / prices.len() as i128;
 
         // Calculate standard deviation
         let variance_sum: i128 = prices.iter().fold(0i128, |acc, p| {
             let diff = p - mean;
-            acc.checked_add(diff.checked_mul(diff).expect("variance overflow")).expect("variance overflow")
+            acc.checked_add(diff.checked_mul(diff).expect("variance overflow"))
+                .expect("variance overflow")
         });
         let variance = variance_sum / prices.len() as i128;
 
@@ -364,9 +368,10 @@ impl OracleMedianizer {
             env.storage()
                 .instance()
                 .set(&DataKey::MedianPrice(asset.clone()), &median);
-            env.storage()
-                .instance()
-                .set(&DataKey::LastUpdate(asset.clone()), &env.ledger().timestamp());
+            env.storage().instance().set(
+                &DataKey::LastUpdate(asset.clone()),
+                &env.ledger().timestamp(),
+            );
 
             // Topic: event name only; asset + median in data.
             env.events().publish(
@@ -435,7 +440,11 @@ impl OracleMedianizer {
                 .get(&DataKey::LastUpdate(asset.clone()))
                 .unwrap_or(0);
 
-            if current_time > last_update.checked_add(heartbeat).expect("heartbeat overflow") {
+            if current_time
+                > last_update
+                    .checked_add(heartbeat)
+                    .expect("heartbeat overflow")
+            {
                 return true; // Heartbeat exceeded
             }
         }
@@ -458,7 +467,8 @@ impl OracleMedianizer {
                         old_price - new_price
                     };
 
-                    let deviation_bps = deviation.checked_mul(10000).expect("deviation overflow") / old_price;
+                    let deviation_bps =
+                        deviation.checked_mul(10000).expect("deviation overflow") / old_price;
 
                     if deviation_bps >= deviation_threshold_bps as i128 {
                         return true; // Deviation threshold exceeded

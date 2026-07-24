@@ -75,8 +75,6 @@ impl EventHub {
             .instance()
             .set(&DataKey::RegisteredContracts, &contracts);
 
-
-
         env.events()
             .publish((symbol_short!("hub"), symbol_short!("init")), admin);
     }
@@ -313,7 +311,6 @@ impl EventHub {
 
         contracts.keys()
     }
-
 
     fn is_registered_source(env: &Env, contract: &Address) -> bool {
         let contracts: Map<Address, bool> = env
@@ -632,26 +629,26 @@ mod tests {
 
         client.capture_event(&source, &event_type, &event_data);
         assert_eq!(client.get_event_count(), 3);
-     }
+    }
 
-     // ── Pagination ────────────────────────────────────────────────────────────
+    // ── Pagination ────────────────────────────────────────────────────────────
 
-     #[test]
-     fn test_get_events_pagination() {
-         let env = Env::default();
-         env.mock_all_auths();
+    #[test]
+    fn test_get_events_pagination() {
+        let env = Env::default();
+        env.mock_all_auths();
 
-         let contract_id = env.register(EventHub, ());
-         let client = EventHubClient::new(&env, &contract_id);
+        let contract_id = env.register(EventHub, ());
+        let client = EventHubClient::new(&env, &contract_id);
 
-         let admin = Address::generate(&env);
-         client.initialize(&admin);
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
 
-         let source = Address::generate(&env);
-         client.register_contract(&admin, &source);
+        let source = Address::generate(&env);
+        client.register_contract(&admin, &source);
 
-         let event_type = SorobanString::from_str(&env, "evt");
-         let event_data = Bytes::from_slice(&env, b"data");
+        let event_type = SorobanString::from_str(&env, "evt");
+        let event_data = Bytes::from_slice(&env, b"data");
 
         for _ in 0..5 {
             client.capture_event(&source, &event_type, &event_data);

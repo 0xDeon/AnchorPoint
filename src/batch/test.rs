@@ -2,9 +2,7 @@
 
 use super::{BatchExecutor, BatchExecutorClient, Call, CallWithRetry, OpStatus, RetryConfig};
 use soroban_sdk::{
-    contract, contractimpl, symbol_short,
-    testutils::Address as _,
-    Env, IntoVal, Vec,
+    contract, contractimpl, symbol_short, testutils::Address as _, Env, IntoVal, Vec,
 };
 
 #[contract]
@@ -46,7 +44,10 @@ impl BrokenContract {
 }
 
 fn default_retry(max_attempts: u32) -> RetryConfig {
-    RetryConfig { max_attempts, delay_ledgers: 0 }
+    RetryConfig {
+        max_attempts,
+        delay_ledgers: 0,
+    }
 }
 
 fn setup(env: &Env) -> BatchExecutorClient<'_> {
@@ -64,10 +65,21 @@ fn test_execute_batch() {
     let client = setup(&env);
     let mock_id = env.register(MockContract, ());
 
-    let calls = Vec::from_array(&env, [
-        Call { contract: mock_id.clone(), function: symbol_short!("echo"), args: (123u32,).into_val(&env) },
-        Call { contract: mock_id.clone(), function: symbol_short!("echo"), args: (456u32,).into_val(&env) },
-    ]);
+    let calls = Vec::from_array(
+        &env,
+        [
+            Call {
+                contract: mock_id.clone(),
+                function: symbol_short!("echo"),
+                args: (123u32,).into_val(&env),
+            },
+            Call {
+                contract: mock_id.clone(),
+                function: symbol_short!("echo"),
+                args: (456u32,).into_val(&env),
+            },
+        ],
+    );
 
     let caller = soroban_sdk::Address::generate(&env);
     let results = client.execute_batch(&caller, &calls);
@@ -87,7 +99,11 @@ fn test_retry_all_succeed_first_try() {
     let mock_id = env.register(MockContract, ());
 
     let make = |v: u32| CallWithRetry {
-        call: Call { contract: mock_id.clone(), function: symbol_short!("echo"), args: (v,).into_val(&env) },
+        call: Call {
+            contract: mock_id.clone(),
+            function: symbol_short!("echo"),
+            args: (v,).into_val(&env),
+        },
         retry: default_retry(3),
     };
 
@@ -123,26 +139,29 @@ fn test_retry_succeeds_after_retries() {
     let broken_id = env.register(BrokenContract, ());
     let mock_id = env.register(MockContract, ());
 
-    let calls = Vec::from_array(&env, [
-        // This one will fail twice (max_attempts=2) then be marked Failed
-        CallWithRetry {
-            call: Call {
-                contract: broken_id.clone(),
-                function: symbol_short!("broken"),
-                args: Vec::new(&env),
+    let calls = Vec::from_array(
+        &env,
+        [
+            // This one will fail twice (max_attempts=2) then be marked Failed
+            CallWithRetry {
+                call: Call {
+                    contract: broken_id.clone(),
+                    function: symbol_short!("broken"),
+                    args: Vec::new(&env),
+                },
+                retry: default_retry(2),
             },
-            retry: default_retry(2),
-        },
-        // This one succeeds on first attempt
-        CallWithRetry {
-            call: Call {
-                contract: mock_id.clone(),
-                function: symbol_short!("echo"),
-                args: (42u32,).into_val(&env),
+            // This one succeeds on first attempt
+            CallWithRetry {
+                call: Call {
+                    contract: mock_id.clone(),
+                    function: symbol_short!("echo"),
+                    args: (42u32,).into_val(&env),
+                },
+                retry: default_retry(3),
             },
-            retry: default_retry(3),
-        },
-    ]);
+        ],
+    );
 
     let caller = soroban_sdk::Address::generate(&env);
     let batch = client.execute_batch_with_retry(&caller, &calls, &false);
@@ -169,16 +188,27 @@ fn test_failed_call_does_not_abort_batch() {
     let broken_id = env.register(BrokenContract, ());
     let mock_id = env.register(MockContract, ());
 
-    let calls = Vec::from_array(&env, [
-        CallWithRetry {
-            call: Call { contract: broken_id.clone(), function: symbol_short!("broken"), args: Vec::new(&env) },
-            retry: default_retry(2),
-        },
-        CallWithRetry {
-            call: Call { contract: mock_id.clone(), function: symbol_short!("echo"), args: (99u32,).into_val(&env) },
-            retry: default_retry(1),
-        },
-    ]);
+    let calls = Vec::from_array(
+        &env,
+        [
+            CallWithRetry {
+                call: Call {
+                    contract: broken_id.clone(),
+                    function: symbol_short!("broken"),
+                    args: Vec::new(&env),
+                },
+                retry: default_retry(2),
+            },
+            CallWithRetry {
+                call: Call {
+                    contract: mock_id.clone(),
+                    function: symbol_short!("echo"),
+                    args: (99u32,).into_val(&env),
+                },
+                retry: default_retry(1),
+            },
+        ],
+    );
 
     let caller = soroban_sdk::Address::generate(&env);
     let batch = client.execute_batch_with_retry(&caller, &calls, &false);
@@ -199,20 +229,35 @@ fn test_abort_on_failure_skips_remaining() {
     let broken_id = env.register(BrokenContract, ());
     let mock_id = env.register(MockContract, ());
 
-    let calls = Vec::from_array(&env, [
-        CallWithRetry {
-            call: Call { contract: broken_id.clone(), function: symbol_short!("broken"), args: Vec::new(&env) },
-            retry: default_retry(1),
-        },
-        CallWithRetry {
-            call: Call { contract: mock_id.clone(), function: symbol_short!("echo"), args: (7u32,).into_val(&env) },
-            retry: default_retry(1),
-        },
-        CallWithRetry {
-            call: Call { contract: mock_id.clone(), function: symbol_short!("echo"), args: (8u32,).into_val(&env) },
-            retry: default_retry(1),
-        },
-    ]);
+    let calls = Vec::from_array(
+        &env,
+        [
+            CallWithRetry {
+                call: Call {
+                    contract: broken_id.clone(),
+                    function: symbol_short!("broken"),
+                    args: Vec::new(&env),
+                },
+                retry: default_retry(1),
+            },
+            CallWithRetry {
+                call: Call {
+                    contract: mock_id.clone(),
+                    function: symbol_short!("echo"),
+                    args: (7u32,).into_val(&env),
+                },
+                retry: default_retry(1),
+            },
+            CallWithRetry {
+                call: Call {
+                    contract: mock_id.clone(),
+                    function: symbol_short!("echo"),
+                    args: (8u32,).into_val(&env),
+                },
+                retry: default_retry(1),
+            },
+        ],
+    );
 
     let caller = soroban_sdk::Address::generate(&env);
     let batch = client.execute_batch_with_retry(&caller, &calls, &true);
@@ -235,10 +280,17 @@ fn test_nonce_increments() {
 
     assert_eq!(client.get_nonce(&caller), 0);
 
-    let calls = Vec::from_array(&env, [CallWithRetry {
-        call: Call { contract: mock_id.clone(), function: symbol_short!("echo"), args: (1u32,).into_val(&env) },
-        retry: default_retry(1),
-    }]);
+    let calls = Vec::from_array(
+        &env,
+        [CallWithRetry {
+            call: Call {
+                contract: mock_id.clone(),
+                function: symbol_short!("echo"),
+                args: (1u32,).into_val(&env),
+            },
+            retry: default_retry(1),
+        }],
+    );
 
     client.execute_batch_with_retry(&caller, &calls, &false);
     assert_eq!(client.get_nonce(&caller), 1);
@@ -249,6 +301,22 @@ fn test_nonce_increments() {
 
 #[test]
 fn test_retry_config_clamping() {
-    assert_eq!(RetryConfig { max_attempts: 0, delay_ledgers: 0 }.validated().max_attempts, 1);
-    assert_eq!(RetryConfig { max_attempts: 99, delay_ledgers: 0 }.validated().max_attempts, 5);
+    assert_eq!(
+        RetryConfig {
+            max_attempts: 0,
+            delay_ledgers: 0
+        }
+        .validated()
+        .max_attempts,
+        1
+    );
+    assert_eq!(
+        RetryConfig {
+            max_attempts: 99,
+            delay_ledgers: 0
+        }
+        .validated()
+        .max_attempts,
+        5
+    );
 }

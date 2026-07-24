@@ -1,12 +1,14 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, token, vec, Address, Env, Vec};
+use soroban_sdk::{
+    contract, contractimpl, contracttype, symbol_short, token, vec, Address, Env, Vec,
+};
 
 #[contracttype]
 pub enum DataKey {
     Admin,
     Token,
-    BaseRate,   // Base rewards per second per token (scaled by 1e7)
-    Tiers,      // Vec<LockTier>
+    BaseRate, // Base rewards per second per token (scaled by 1e7)
+    Tiers,    // Vec<LockTier>
     PenaltyBps,
     Stake(Address),
 }
@@ -62,17 +64,33 @@ impl StakingContract {
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::Token, &token);
         env.storage().instance().set(&DataKey::BaseRate, &base_rate);
-        env.storage().instance().set(&DataKey::PenaltyBps, &penalty_bps);
+        env.storage()
+            .instance()
+            .set(&DataKey::PenaltyBps, &penalty_bps);
 
         // Default tiers: 1 month (1x), 3 months (1.25x), 6 months (1.5x), 12 months (2x)
         let default_tiers: Vec<LockTier> = vec![
             &env,
-            LockTier { lock_seconds: 30 * 24 * 3600,  rate_multiplier: 100 },
-            LockTier { lock_seconds: 90 * 24 * 3600,  rate_multiplier: 125 },
-            LockTier { lock_seconds: 180 * 24 * 3600, rate_multiplier: 150 },
-            LockTier { lock_seconds: 365 * 24 * 3600, rate_multiplier: 200 },
+            LockTier {
+                lock_seconds: 30 * 24 * 3600,
+                rate_multiplier: 100,
+            },
+            LockTier {
+                lock_seconds: 90 * 24 * 3600,
+                rate_multiplier: 125,
+            },
+            LockTier {
+                lock_seconds: 180 * 24 * 3600,
+                rate_multiplier: 150,
+            },
+            LockTier {
+                lock_seconds: 365 * 24 * 3600,
+                rate_multiplier: 200,
+            },
         ];
-        env.storage().instance().set(&DataKey::Tiers, &default_tiers);
+        env.storage()
+            .instance()
+            .set(&DataKey::Tiers, &default_tiers);
     }
 
     pub fn set_tiers(env: Env, tiers: Vec<LockTier>) {
@@ -87,9 +105,16 @@ impl StakingContract {
     }
 
     pub fn stake(env: Env, user: Address, amount: i128, tier_index: u32) {
-
-        if let Some(registry) = env.storage().instance().get::<_, soroban_sdk::Address>(&soroban_sdk::symbol_short!("sec_reg")) {
-            let is_paused: bool = env.invoke_contract(&registry, &soroban_sdk::Symbol::new(&env, "is_paused"), soroban_sdk::vec![&env]);
+        if let Some(registry) = env
+            .storage()
+            .instance()
+            .get::<_, soroban_sdk::Address>(&soroban_sdk::symbol_short!("sec_reg"))
+        {
+            let is_paused: bool = env.invoke_contract(
+                &registry,
+                &soroban_sdk::Symbol::new(&env, "is_paused"),
+                soroban_sdk::vec![&env],
+            );
             if is_paused {
                 panic!("contract is paused");
             }
@@ -120,8 +145,13 @@ impl StakingContract {
             info.rate_multiplier = tier.rate_multiplier;
         }
 
-        env.storage().persistent().set(&DataKey::Stake(user.clone()), &info);
-        env.events().publish((symbol_short!("staking"), symbol_short!("stake")), (user, amount, info.lock_end, info.rate_multiplier));
+        env.storage()
+            .persistent()
+            .set(&DataKey::Stake(user.clone()), &info);
+        env.events().publish(
+            (symbol_short!("staking"), symbol_short!("stake")),
+            (user, amount, info.lock_end, info.rate_multiplier),
+        );
     }
 
     pub fn withdraw(env: Env, user: Address) {
@@ -146,7 +176,8 @@ impl StakingContract {
 
         let current_time = env.ledger().timestamp();
         let base_rate: i128 = env.storage().instance().get(&DataKey::BaseRate).unwrap();
-        let rewards = info.accumulated_rewards + Self::calc_new_rewards(base_rate, &info, current_time);
+        let rewards =
+            info.accumulated_rewards + Self::calc_new_rewards(base_rate, &info, current_time);
         let mut amount_to_return = info.amount;
 
         if current_time < info.lock_end {
@@ -157,15 +188,22 @@ impl StakingContract {
             // Or just lost.
         }
 
-        let total_to_send = amount_to_return.checked_add(rewards).expect("total overflow");
+        let total_to_send = amount_to_return
+            .checked_add(rewards)
+            .expect("total overflow");
 
-        env.storage().persistent().remove(&DataKey::Stake(user.clone()));
+        env.storage()
+            .persistent()
+            .remove(&DataKey::Stake(user.clone()));
 
         let token_addr: Address = env.storage().instance().get(&DataKey::Token).unwrap();
         let token_client = token::Client::new(&env, &token_addr);
         token_client.transfer(&env.current_contract_address(), &user, &total_to_send);
 
-        env.events().publish((symbol_short!("staking"), symbol_short!("withdraw")), (user, amount_to_return, rewards));
+        env.events().publish(
+            (symbol_short!("staking"), symbol_short!("withdraw")),
+            (user, amount_to_return, rewards),
+        );
     }
 
     pub fn claim_rewards(env: Env, user: Address) {
@@ -188,18 +226,24 @@ impl StakingContract {
         let mut info = Self::get_stake_info(env.clone(), user.clone());
         let current_time = env.ledger().timestamp();
         let base_rate: i128 = env.storage().instance().get(&DataKey::BaseRate).unwrap();
-        let rewards = info.accumulated_rewards + Self::calc_new_rewards(base_rate, &info, current_time);
+        let rewards =
+            info.accumulated_rewards + Self::calc_new_rewards(base_rate, &info, current_time);
         assert!(rewards > 0, "no rewards to claim");
 
         info.accumulated_rewards = 0;
         info.last_updated = current_time;
-        env.storage().persistent().set(&DataKey::Stake(user.clone()), &info);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Stake(user.clone()), &info);
 
         let token_addr: Address = env.storage().instance().get(&DataKey::Token).unwrap();
         let token_client = token::Client::new(&env, &token_addr);
         token_client.transfer(&env.current_contract_address(), &user, &rewards);
 
-        env.events().publish((symbol_short!("staking"), symbol_short!("claim")), (user, rewards));
+        env.events().publish(
+            (symbol_short!("staking"), symbol_short!("claim")),
+            (user, rewards),
+        );
     }
 
     pub fn get_stake_info(env: Env, user: Address) -> StakeInfo {
@@ -236,17 +280,27 @@ impl StakingContract {
 mod tests {
     extern crate std;
     use super::*;
-    use soroban_sdk::{testutils::{Address as _, Ledger}, Env, Address, symbol_short, token::{self, StellarAssetClient}};
+    use soroban_sdk::{
+        symbol_short,
+        testutils::{Address as _, Ledger},
+        token::{self, StellarAssetClient},
+        Address, Env,
+    };
 
     #[contract]
     pub struct MockRegistry;
     #[contractimpl]
     impl MockRegistry {
         pub fn is_paused(env: Env) -> bool {
-            env.storage().instance().get(&symbol_short!("paused")).unwrap_or(false)
+            env.storage()
+                .instance()
+                .get(&symbol_short!("paused"))
+                .unwrap_or(false)
         }
         pub fn set_paused(env: Env, paused: bool) {
-            env.storage().instance().set(&symbol_short!("paused"), &paused);
+            env.storage()
+                .instance()
+                .set(&symbol_short!("paused"), &paused);
         }
     }
 
@@ -256,17 +310,22 @@ mod tests {
         env.ledger().set_timestamp(12345);
         let id = env.register(StakingContract, ());
         let client = StakingContractClient::new(&env, &id);
-        
+
         let admin = Address::generate(&env);
         let token_admin = Address::generate(&env);
-        let token_id = env.register_stellar_asset_contract_v2(token_admin).address();
-        
+        let token_id = env
+            .register_stellar_asset_contract_v2(token_admin)
+            .address();
+
         client.initialize(&admin, &token_id, &1000, &1000); // 10% penalty, 1hr lock
-        
+
         // Define tiers matching the test expectations!
         let test_tiers = vec![
             &env,
-            LockTier { lock_seconds: 3600, rate_multiplier: 100 },
+            LockTier {
+                lock_seconds: 3600,
+                rate_multiplier: 100,
+            },
         ];
         client.set_tiers(&test_tiers);
 
@@ -286,18 +345,18 @@ mod tests {
     fn test_stake() {
         let (env, client, _admin, token_id) = setup();
         let user = Address::generate(&env);
-        
+
         let token_client = token::Client::new(&env, &token_id);
         let stellar_asset_client = StellarAssetClient::new(&env, &token_id);
         stellar_asset_client.mint(&user, &10000);
-        
+
         client.stake(&user, &1000, &0);
-        
+
         let info = client.get_stake_info(&user);
         assert_eq!(info.amount, 1000);
         assert_eq!(info.accumulated_rewards, 0);
         assert_eq!(info.lock_end, env.ledger().timestamp() + 3600);
-        
+
         assert_eq!(token_client.balance(&user), 9000);
         assert_eq!(token_client.balance(&client.address), 1000);
     }
@@ -309,12 +368,12 @@ mod tests {
         let token_client = token::Client::new(&env, &token_id);
         let stellar_asset_client = StellarAssetClient::new(&env, &token_id);
         stellar_asset_client.mint(&user, &10000);
-        
+
         client.stake(&user, &1000, &0);
-        
+
         // Withdraw immediately (before lock_end)
         client.withdraw(&user);
-        
+
         // 10% penalty on 1000 = 100. Should get 900 back.
         assert_eq!(token_client.balance(&user), 9900);
         let info = client.get_stake_info(&user);
@@ -328,17 +387,17 @@ mod tests {
         let token_client = token::Client::new(&env, &token_id);
         let stellar_asset_client = StellarAssetClient::new(&env, &token_id);
         stellar_asset_client.mint(&user, &10000);
-        
+
         client.stake(&user, &1000, &0);
-        
+
         // Advance time 4000s (> 3600s lock)
         env.ledger().set_timestamp(env.ledger().timestamp() + 4000);
-        
+
         // Fund contract with extra reward tokens so it can pay out rewards
         stellar_asset_client.mint(&client.address, &400);
 
         client.withdraw(&user);
-        
+
         // rewards = (1000 * 1000 * 4000) / 10,000,000 = 400
         assert_eq!(token_client.balance(&user), 9000 + 1000 + 400);
     }
@@ -350,16 +409,16 @@ mod tests {
         let token_client = token::Client::new(&env, &token_id);
         let stellar_asset_client = StellarAssetClient::new(&env, &token_id);
         stellar_asset_client.mint(&user, &10000);
-        
+
         client.stake(&user, &1000, &0);
-        
+
         env.ledger().set_timestamp(env.ledger().timestamp() + 1000);
-        
+
         client.claim_rewards(&user);
-        
+
         // rewards = 100
         assert_eq!(token_client.balance(&user), 9000 + 100);
-        
+
         let info = client.get_stake_info(&user);
         assert_eq!(info.amount, 1000);
         assert_eq!(info.accumulated_rewards, 0);
@@ -370,13 +429,13 @@ mod tests {
     fn test_pause_functionality() {
         let (env, client, _admin, _token_id) = setup();
         let user = Address::generate(&env);
-        
+
         let registry_id = env.register(MockRegistry, ());
         let registry_client = MockRegistryClient::new(&env, &registry_id);
         registry_client.set_paused(&true);
-        
+
         client.set_security_registry(&registry_id);
-        
+
         client.stake(&user, &100, &0);
     }
 
@@ -416,4 +475,3 @@ mod tests {
         client.claim_rewards(&user);
     }
 }
-

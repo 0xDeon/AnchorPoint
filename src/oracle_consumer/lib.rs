@@ -68,7 +68,10 @@ impl OracleConsumer {
             (asset.clone(),).into_val(&env),
         );
 
-        assert!(price_info.asset == asset, "oracle returned mismatched asset");
+        assert!(
+            price_info.asset == asset,
+            "oracle returned mismatched asset"
+        );
         assert!(price_info.price > 0, "oracle returned non-positive price");
 
         env.storage()
@@ -77,8 +80,10 @@ impl OracleConsumer {
         Self::store_observation(&env, asset.clone(), price_info.clone());
 
         // Topic: event name only; asset + price in data.
-        env.events()
-            .publish((symbol_short!("oracle"), symbol_short!("price_upd")), (asset, price_info.price));
+        env.events().publish(
+            (symbol_short!("oracle"), symbol_short!("price_upd")),
+            (asset, price_info.price),
+        );
 
         price_info
     }
@@ -359,7 +364,12 @@ mod tests {
         env.ledger().set(ledger);
     }
 
-    fn setup() -> (Env, OracleConsumerClient<'static>, Address, MockOracleClient<'static>) {
+    fn setup() -> (
+        Env,
+        OracleConsumerClient<'static>,
+        Address,
+        MockOracleClient<'static>,
+    ) {
         let env = Env::default();
         env.mock_all_auths();
 
@@ -378,7 +388,10 @@ mod tests {
     fn test_initialization() {
         let (_env, client, _admin, oracle) = setup();
         assert_eq!(client.get_oracle(), oracle.address.clone());
-        assert_eq!(client.get_default_twap_window(), DEFAULT_TWAP_WINDOW_SECONDS);
+        assert_eq!(
+            client.get_default_twap_window(),
+            DEFAULT_TWAP_WINDOW_SECONDS
+        );
         assert_eq!(client.get_max_price_age(), DEFAULT_MAX_PRICE_AGE_SECONDS);
         assert_eq!(client.get_max_observations(), DEFAULT_MAX_OBSERVATIONS);
     }

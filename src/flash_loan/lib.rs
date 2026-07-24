@@ -192,9 +192,7 @@ impl FlashLoanProvider {
             if balance_after < expected_repayment {
                 panic!(
                     "Flash loan not repaid for token {:?}: expected {}, got {}",
-                    loan.token,
-                    expected_repayment,
-                    balance_after
+                    loan.token, expected_repayment, balance_after
                 );
             }
         }

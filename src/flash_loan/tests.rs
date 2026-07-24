@@ -2,7 +2,8 @@
 mod tests {
     use crate::{FlashLoanProvider, FlashLoanProviderClient, LoanDetail};
     use soroban_sdk::{
-        contract, contractimpl, symbol_short, testutils::Address as _,
+        contract, contractimpl, symbol_short,
+        testutils::Address as _,
         token::{Client as TokenClient, StellarAssetClient},
         Address, Env, Vec,
     };
@@ -19,9 +20,15 @@ mod tests {
             pub fn execute_loan(env: Env, token: Address, amount: i128, fee: i128) {
                 let token_client = TokenClient::new(&env, &token);
                 let total_due = amount + fee;
-                env.storage().instance().set(&symbol_short!("last_tok"), &token);
-                env.storage().instance().set(&symbol_short!("last_amt"), &amount);
-                env.storage().instance().set(&symbol_short!("last_fee"), &fee);
+                env.storage()
+                    .instance()
+                    .set(&symbol_short!("last_tok"), &token);
+                env.storage()
+                    .instance()
+                    .set(&symbol_short!("last_amt"), &amount);
+                env.storage()
+                    .instance()
+                    .set(&symbol_short!("last_fee"), &fee);
 
                 // Transfer back the amount + fee to the provider
                 token_client.transfer(
