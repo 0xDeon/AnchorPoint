@@ -214,27 +214,31 @@ impl VestingContract {
             return grant.total_amount;
         }
 
-        // Before cliff
-        if current_time
-            < grant
-                .start_time
-                .checked_add(grant.cliff_duration)
-                .expect("time overflow")
-        {
+        // 1. Cliff logic check: Calculate cliff_timestamp
+        let cliff_timestamp = grant
+            .start_time
+            .checked_add(grant.cliff_duration)
+            .expect("time overflow");
+
+        // Check current_time < cliff_timestamp: return 0 unlocked tokens.
+        if current_time < cliff_timestamp {
             return 0;
         }
 
-        // After full duration
-        if current_time
-            >= grant
-                .start_time
-                .checked_add(grant.vesting_duration)
-                .expect("time overflow")
-        {
+        // 2. Cap logic check: Calculate end_timestamp
+        let end_timestamp = grant
+            .start_time
+            .checked_add(grant.vesting_duration)
+            .expect("time overflow");
+
+        // Cap unlocked amount at total allocated tokens.
+        if current_time >= end_timestamp {
             return grant.total_amount;
         }
 
-        // Linear release
+        // 3. Linear calculation: unlocked = total_amount * (current_time - start_time) / vesting_duration
+        // It is mathematically safe to subtract here because we have already validated
+        // that current_time >= cliff_timestamp, and cliff_timestamp >= start_time.
         let elapsed = (current_time - grant.start_time) as i128;
         let duration = grant.vesting_duration as i128;
 
