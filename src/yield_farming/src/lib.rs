@@ -90,6 +90,7 @@ impl YieldFarmingDistributor {
     ///
     /// Flushes the global accumulator before changing the rate so that
     /// previously accrued rewards are calculated at the old rate.
+    #[allow(deprecated)]
     pub fn set_reward_rate(env: Env, rate: i128) {
         assert!(rate >= 0, "reward rate must be non-negative");
         let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
@@ -103,6 +104,7 @@ impl YieldFarmingDistributor {
     /// Claim all pending rewards for `user`.
     ///
     /// Returns the amount of reward tokens transferred.
+    #[allow(deprecated)]
     pub fn claim_rewards(env: Env, user: Address) -> i128 {
         user.require_auth();
         Self::_update_user_reward(&env, &user);
