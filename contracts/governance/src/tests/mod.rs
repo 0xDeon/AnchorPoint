@@ -68,3 +68,143 @@ fn test_initialize_twice_fails() {
     client.initialize(&admin, &200, &100);
     client.initialize(&admin, &200, &100);
 }
+
+#[test]
+fn test_multisig_council_setup() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(GovernanceContract, ());
+    let client = GovernanceContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &200, &100);
+
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+    let signer3 = Address::generate(&env);
+
+    let mut council = soroban_sdk::Vec::new(&env);
+    council.push_back(signer1.clone());
+    council.push_back(signer2.clone());
+    council.push_back(signer3.clone());
+
+    client.set_council(&admin, &council, &2);
+
+    assert_eq!(client.get_threshold(), 2);
+    assert_eq!(client.get_council_signers().len(), 3);
+}
+
+#[test]
+fn test_execute_proposal_multisig_threshold_success() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(GovernanceContract, ());
+    let client = GovernanceContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &200, &100);
+
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+    let signer3 = Address::generate(&env);
+
+    let mut council = soroban_sdk::Vec::new(&env);
+    council.push_back(signer1.clone());
+    council.push_back(signer2.clone());
+    council.push_back(signer3.clone());
+
+    // 2-of-3 multisig threshold
+    client.set_council(&admin, &council, &2);
+
+    let prop_id = client.create_proposal(&admin, &soroban_sdk::String::from_str(&env, "Upgrade"));
+
+    let mut signers = soroban_sdk::Vec::new(&env);
+    signers.push_back(signer1);
+    signers.push_back(signer2);
+
+    let res = client.try_execute_proposal(&prop_id, &signers);
+    assert!(res.is_ok());
+}
+
+#[test]
+fn test_execute_proposal_insufficient_signatures_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(GovernanceContract, ());
+    let client = GovernanceContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &200, &100);
+
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+
+    let mut council = soroban_sdk::Vec::new(&env);
+    council.push_back(signer1.clone());
+    council.push_back(signer2.clone());
+
+    client.set_council(&admin, &council, &2);
+
+    let prop_id = client.create_proposal(&admin, &soroban_sdk::String::from_str(&env, "Upgrade"));
+
+    // Provide only 1 signature when threshold is 2
+    let mut signers = soroban_sdk::Vec::new(&env);
+    signers.push_back(signer1);
+
+    let err = client.try_execute_proposal(&prop_id, &signers).expect_err("Should fail with insufficient signatures");
+    assert_eq!(err, Ok(soroban_sdk::Error::from(crate::GovernanceError::InsufficientSignatures)));
+}
+
+#[test]
+fn test_execute_proposal_unauthorized_signer_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(GovernanceContract, ());
+    let client = GovernanceContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &200, &100);
+
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+    let outsider = Address::generate(&env);
+
+    let mut council = soroban_sdk::Vec::new(&env);
+    council.push_back(signer1.clone());
+    council.push_back(signer2.clone());
+
+    client.set_council(&admin, &council, &2);
+
+    let prop_id = client.create_proposal(&admin, &soroban_sdk::String::from_str(&env, "Upgrade"));
+
+    let mut signers = soroban_sdk::Vec::new(&env);
+    signers.push_back(signer1);
+    signers.push_back(outsider);
+
+    let err = client.try_execute_proposal(&prop_id, &signers).expect_err("Should fail with unauthorized signer");
+    assert_eq!(err, Ok(soroban_sdk::Error::from(crate::GovernanceError::UnauthorizedSigner)));
+}
+
+#[test]
+fn test_execute_proposal_duplicate_signer_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(GovernanceContract, ());
+    let client = GovernanceContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &200, &100);
+
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+
+    let mut council = soroban_sdk::Vec::new(&env);
+    council.push_back(signer1.clone());
+    council.push_back(signer2.clone());
+
+    client.set_council(&admin, &council, &2);
+
+    let prop_id = client.create_proposal(&admin, &soroban_sdk::String::from_str(&env, "Upgrade"));
+
+    let mut signers = soroban_sdk::Vec::new(&env);
+    signers.push_back(signer1.clone());
+    signers.push_back(signer1);
+
+    let err = client.try_execute_proposal(&prop_id, &signers).expect_err("Should fail with duplicate signer");
+    assert_eq!(err, Ok(soroban_sdk::Error::from(crate::GovernanceError::DuplicateSigner)));
+}

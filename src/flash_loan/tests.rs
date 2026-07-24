@@ -377,6 +377,32 @@ mod tests {
     }
 
     #[test]
+    fn test_flash_loan_fee_verification_0_09_percent() {
+        let env = Env::default();
+        let (provider_id, token_id, _admin, _) = setup(&env);
+
+        let receiver_id = env.register(MockReceiverSuccess, ());
+        let receiver_client = MockReceiverSuccessClient::new(&env, &receiver_id);
+        receiver_client.set_provider(&provider_id);
+
+        let provider_client = FlashLoanProviderClient::new(&env, &provider_id);
+        // Set fee to 9 basis points (0.09%)
+        provider_client.set_fee_bps(&9);
+        assert_eq!(provider_client.get_fee_bps(), 9);
+
+        let amount = 1_000_000_i128;
+        // 9 bps of 1_000_000 = 1_000_000 * 9 / 10_000 = 900
+        let fee = fund_receiver_fee(&env, &token_id, &receiver_id, amount, 9);
+        assert_eq!(fee, 900);
+
+        provider_client.flash_loan(&receiver_id, &token_id, &amount);
+
+        // Verify post-execution balance is original principal + 0.09% fee
+        assert_eq!(balance(&env, &token_id, &provider_id), 1_000_000 + 900);
+        assert_eq!(receiver_client.last_fee(), 900);
+    }
+
+    #[test]
     #[should_panic(expected = "Flash loan not repaid with fee")]
     fn test_flash_loan_failure() {
         let env = Env::default();
