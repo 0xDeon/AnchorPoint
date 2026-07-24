@@ -17,6 +17,7 @@ pub struct EscrowDetails {
     pub token: Address,
     pub amount: i128,
     pub unlock_time: u64,
+    pub release_timestamp: u64,
     pub conditions_met: bool,
 }
 
@@ -81,6 +82,7 @@ impl EscrowTimelock {
             token,
             amount,
             unlock_time,
+            release_timestamp: unlock_time,
             conditions_met: false,
         };
 
@@ -146,13 +148,12 @@ impl EscrowTimelock {
             panic!("refund already claimed");
         }
 
-        // Check if conditions are met OR unlock time has passed
-        let conditions_met = details.conditions_met;
-        let time_passed = e.ledger().timestamp() >= details.unlock_time;
-
-        if !conditions_met && !time_passed {
-            panic!("escrow not yet claimable");
-        }
+        // Check timelock release delay: current_timestamp >= release_timestamp
+        let current_timestamp = e.ledger().timestamp();
+        assert!(
+            current_timestamp >= details.release_timestamp,
+            "timelock release delay not reached"
+        );
 
         details.recipient.require_auth();
 
@@ -362,7 +363,10 @@ mod tests {
         // Mark conditions as met
         client.mark_conditions_met();
 
-        // Should be able to claim even though time hasn't passed
+        // Advance time to release_timestamp
+        e.ledger().with_mut(|li| li.timestamp = 10000);
+
+        // Should be able to claim when release_timestamp is reached
         client.claim();
 
         assert_eq!(token_client.balance(&recipient), amount);
@@ -461,5 +465,33 @@ mod tests {
 
         // Second refund would fail due to panic, but we can't test it here
         // The contract prevents double claims through the RefundClaimed flag
+    }
+
+    #[test]
+    #[should_panic(expected = "timelock release delay not reached")]
+    fn test_timelock_release_delay_enforced() {
+        let e = Env::default();
+        e.mock_all_auths();
+
+        let sender = Address::generate(&e);
+        let recipient = Address::generate(&e);
+        let admin = Address::generate(&e);
+        let token_contract = e.register_stellar_asset_contract_v2(admin.clone());
+        let token_id = token_contract.address();
+
+        let contract_id = e.register(EscrowTimelock, ());
+        let client = EscrowTimelockClient::new(&e, &contract_id);
+
+        let amount = 1000;
+        let stellar_client = StellarAssetClient::new(&e, &token_id);
+        stellar_client.mint(&sender, &amount);
+
+        let unlock_time = 1000;
+        e.ledger().with_mut(|li| li.timestamp = 500); // Current timestamp before release_timestamp
+
+        client.initialize(&sender, &recipient, &token_id, &amount, &unlock_time);
+
+        // Claim before release_timestamp should panic
+        client.claim();
     }
 }
