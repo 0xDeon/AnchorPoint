@@ -1,4 +1,4 @@
-import React, { lazy, Suspense, useEffect, useMemo, useState } from 'react';
+import React, { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import {
   LayoutDashboard,
   ArrowUpRight,
@@ -137,7 +137,43 @@ const App = () => {
   const [wallet, setWallet] = useState<{ publicKey: string; network: string } | null>(null);
   const [walletStatus, setWalletStatus] = useState<'idle' | 'connecting' | 'error'>('idle');
   const [walletError, setWalletError] = useState('');
+  const [walletSessionResetCounter, setWalletSessionResetCounter] = useState(0);
   const walletAdapter = useMemo(() => new FreighterAdapter(), []);
+
+  const clearClientSessionState = useCallback(() => {
+    const shouldClearKey = (key: string) => /token|session|wallet|transaction|balance/i.test(key);
+
+    for (let index = localStorage.length - 1; index >= 0; index -= 1) {
+      const key = localStorage.key(index);
+      if (key && shouldClearKey(key)) {
+        localStorage.removeItem(key);
+      }
+    }
+
+    for (let index = sessionStorage.length - 1; index >= 0; index -= 1) {
+      const key = sessionStorage.key(index);
+      if (key && shouldClearKey(key)) {
+        sessionStorage.removeItem(key);
+      }
+    }
+  }, []);
+
+  const handleWalletDisconnect = useCallback(async (skipAdapterDisconnect = false) => {
+    if (!skipAdapterDisconnect) {
+      try {
+        await walletAdapter.disconnect();
+      } catch (error) {
+        console.warn('Wallet disconnect cleanup failed:', error);
+      }
+    }
+
+    clearClientSessionState();
+    setWallet(null);
+    setWalletStatus('idle');
+    setWalletError('');
+    setActiveTab('dashboard');
+    setWalletSessionResetCounter((previous) => previous + 1);
+  }, [clearClientSessionState, walletAdapter]);
 
   useEffect(() => {
     let ignore = false;
@@ -170,6 +206,17 @@ const App = () => {
       ignore = true;
     };
   }, []);
+
+  useEffect(() => {
+    const handleExternalDisconnect = () => {
+      void handleWalletDisconnect(true);
+    };
+
+    window.addEventListener('freighter:disconnect', handleExternalDisconnect);
+    return () => {
+      window.removeEventListener('freighter:disconnect', handleExternalDisconnect);
+    };
+  }, [handleWalletDisconnect]);
 
   useEffect(() => {
     const mediaQuery = window.matchMedia('(min-width: 1024px)');
@@ -357,6 +404,9 @@ const App = () => {
             <UserAvatarDropdown
               onSettings={() => setActiveTab('settings')}
               onNotifications={() => setActiveTab('notifications')}
+              onSignOut={() => {
+                void handleWalletDisconnect();
+              }}
             />
           </div>
         </header>
@@ -399,7 +449,7 @@ const App = () => {
           <AnimatePresence mode="wait">
             <motion.div
               data-testid="active-view"
-              key={activeTab}
+              key={`${activeTab}:${walletSessionResetCounter}`}
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -10 }}
