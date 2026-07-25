@@ -149,17 +149,51 @@ impl RevenueDistributor {
         );
     }
 
-    /// Mockup of a sweep function that would pull fees from an external contract.
-    /// In a real implementation, this would call a 'collect_fees' or 'claim' function
-    /// on the target contract where this distributor is the beneficiary.
+    /// Sweep accrued swap fees from an AMM pool into the protocol treasury.
+    ///
+    /// Queries the distributor's balance of `token_a` (assumed to be the fee
+    /// token), swaps it into `token_b` via the AMM's `swap` function, and
+    /// forwards the proceeds to the treasury.
     pub fn sweep_amm(env: Env, amm_contract: Address, token_a: Address, token_b: Address) {
-        // This is a stub for the interaction logic.
-        // It demonstrates how the distributor would trigger fee collection.
-        // For example: AMMClient::new(&env, &amm_contract).collect_protocol_fees();
-        
+        let treasury: Address = env.storage().instance().get(&DataKey::Treasury).unwrap();
+
+        let token_a_client = token::Client::new(&env, &token_a);
+        let balance_a = token_a_client.balance(&env.current_contract_address());
+
+        if balance_a == 0 {
+            return;
+        }
+
+        // Execute swap: token_a → token_b through the AMM pool.
+        // The AMM pulls token_a from this contract, validates min_amount_out,
+        // and sends token_b back to this contract.
+        let _amount_out: i128 = env.invoke_contract(
+            &amm_contract,
+            &symbol_short!("swap"),
+            (
+                env.current_contract_address(),
+                token_a.clone(),
+                balance_a,
+                1_i128,  // min_amount_out: accept any positive amount
+            )
+                .into_val(&env),
+        );
+
+        // Transfer the received token_b to the treasury.
+        let token_b_client = token::Client::new(&env, &token_b);
+        let treasury_amount = token_b_client.balance(&env.current_contract_address());
+
+        if treasury_amount > 0 {
+            token_b_client.transfer(
+                &env.current_contract_address(),
+                &treasury,
+                &treasury_amount,
+            );
+        }
+
         env.events().publish(
             (symbol_short!("sweep"), amm_contract),
-            (token_a, token_b),
+            (token_a, token_b, balance_a, treasury_amount),
         );
     }
 
@@ -177,6 +211,7 @@ mod tests {
     use super::*;
     use soroban_sdk::testutils::{Address as _};
     use soroban_sdk::{token, Address, Env};
+    use anchorpoint_amm::AMM;
 
     fn setup() -> (Env, Address, Address, Address, Address, Address) {
         let env = Env::default();
@@ -364,5 +399,102 @@ mod tests {
         let (env, distributor_id, admin, _, _, _) = setup();
         let client = RevenueDistributorClient::new(&env, &distributor_id);
         client.set_shares(&admin, &10001);
+    }
+
+    // ── Sweep AMM tests ──
+
+    fn sweep_setup() -> (Env, RevenueDistributorClient<'static>, Address, Address, Address, Address, Address, Address) {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let admin = Address::generate(&env);
+        let treasury = Address::generate(&env);
+        let gov_stakers = Address::generate(&env);
+        let lp = Address::generate(&env);
+
+        // Register tokens using Stellar asset contracts
+        let token_admin = Address::generate(&env);
+        let token_a_id = env.register_stellar_asset_contract_v2(token_admin.clone());
+        let token_b_id = env.register_stellar_asset_contract_v2(token_admin.clone());
+        let token_a = token_a_id.address();
+        let token_b = token_b_id.address();
+
+        let token_a_sac = token::StellarAssetClient::new(&env, &token_a);
+        let token_b_sac = token::StellarAssetClient::new(&env, &token_b);
+
+        // Register and initialize the AMM
+        let amm_id = env.register(AMM, ());
+        let amm_client = anchorpoint_amm::AMMClient::new(&env, &amm_id);
+        amm_client.initialize(&admin, &token_a, &token_b);
+
+        // Mint tokens to LP for liquidity provision
+        token_a_sac.mint(&lp, &100_000_000);
+        token_b_sac.mint(&lp, &100_000_000);
+
+        // LP deposits liquidity into the AMM pool
+        amm_client.deposit(&lp, &50_000_000, &50_000_000);
+
+        // Register and initialize the revenue distributor
+        let distributor_id = env.register_contract(None, RevenueDistributor);
+        let client = RevenueDistributorClient::new(&env, &distributor_id);
+        client.initialize(&admin, &treasury, &gov_stakers, &6000);
+
+        // Mint token_a fees to the distributor (simulating accrued swap revenue)
+        token_a_sac.mint(&distributor_id, &10_000);
+
+        (env, client, distributor_id, amm_id, token_a, token_b, treasury, gov_stakers)
+    }
+
+    #[test]
+    fn test_sweep_amm_swaps_and_transfers_to_treasury() {
+        let (env, client, distributor_id, amm_id, token_a, token_b, treasury, _gov_stakers) = sweep_setup();
+
+        client.sweep_amm(&amm_id, &token_a, &token_b);
+
+        let token_b_client = token::Client::new(&env, &token_b);
+        // Treasury should have received token_b from the swap
+        assert!(token_b_client.balance(&treasury) > 0);
+        // Distributor should have no remaining token_a balance
+        let token_a_client = token::Client::new(&env, &token_a);
+        assert_eq!(token_a_client.balance(&distributor_id), 0);
+    }
+
+    #[test]
+    fn test_sweep_amm_zero_balance_does_nothing() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let admin = Address::generate(&env);
+        let treasury = Address::generate(&env);
+        let gov_stakers = Address::generate(&env);
+
+        let distributor_id = env.register_contract(None, RevenueDistributor);
+        let client = RevenueDistributorClient::new(&env, &distributor_id);
+        client.initialize(&admin, &treasury, &gov_stakers, &6000);
+
+        let token_admin = Address::generate(&env);
+        let token_a_id = env.register_stellar_asset_contract_v2(token_admin.clone());
+        let token_b_id = env.register_stellar_asset_contract_v2(token_admin);
+        let amm_id = env.register(AMM, ());
+        let amm_client = anchorpoint_amm::AMMClient::new(&env, &amm_id);
+        amm_client.initialize(&admin, &token_a_id.address(), &token_b_id.address());
+
+        // No tokens minted to distributor — balance is 0
+        client.sweep_amm(&amm_id, &token_a_id.address(), &token_b_id.address());
+
+        let token_b_client = token::Client::new(&env, &token_b_id.address());
+        assert_eq!(token_b_client.balance(&treasury), 0);
+    }
+
+    #[test]
+    fn test_sweep_amm_emits_revenue_swept_event() {
+        let (env, client, _distributor_id, amm_id, token_a, token_b, _treasury, _gov_stakers) = sweep_setup();
+
+        let events_before = env.events().all().len();
+        client.sweep_amm(&amm_id, &token_a, &token_b);
+        let events_after = env.events().all().len();
+
+        // At least one new event should have been emitted
+        assert!(events_after > events_before, "RevenueSwept event should be emitted");
     }
 }
