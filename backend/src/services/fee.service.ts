@@ -2,6 +2,7 @@ import { RedisService } from './redis.service';
 import { getAsset, AssetConfig, FeeType } from '../config/assets';
 import logger from '../utils/logger';
 import { config } from '../config/env';
+import { DECIMAL_PRECISION, formatDecimal, toDecimal } from '../utils/decimal';
 
 const HORIZON_URL = config.HORIZON_URL;
 const CACHE_KEY = 'fee_engine:stats';
@@ -123,30 +124,32 @@ export interface AssetFeeResult {
  *  - percentage:  amount * feePercent, floored to feeMinimum.
  *  - tiered:      feeFixed + (amount * feePercent), floored to feeMinimum.
  */
-export function computeAssetFee(asset: AssetConfig, amount: number): number {
-  let fee: number;
+export function computeAssetFee(asset: AssetConfig, amount: number | string): number {
+  const amountValue = toDecimal(amount);
+  let fee = toDecimal(0);
+
   switch (asset.feeType) {
     case 'flat':
-      fee = asset.feeFixed;
+      fee = toDecimal(asset.feeFixed);
       break;
     case 'percentage':
-      fee = amount * asset.feePercent;
+      fee = amountValue.times(asset.feePercent);
       break;
     case 'tiered':
-      fee = asset.feeFixed + amount * asset.feePercent;
+      fee = toDecimal(asset.feeFixed).plus(amountValue.times(asset.feePercent));
       break;
     default:
       // Fallback: treat unknown feeType as tiered
-      fee = asset.feeFixed + amount * asset.feePercent;
+      fee = toDecimal(asset.feeFixed).plus(amountValue.times(asset.feePercent));
   }
 
   // Enforce the per-asset minimum fee
-  if (asset.feeMinimum > 0 && fee < asset.feeMinimum) {
-    fee = asset.feeMinimum;
+  if (asset.feeMinimum > 0 && fee.lt(asset.feeMinimum)) {
+    fee = toDecimal(asset.feeMinimum);
   }
 
   // Round to 7 decimal places to avoid floating-point dust
-  return parseFloat(fee.toFixed(7));
+  return Number(formatDecimal(fee, DECIMAL_PRECISION));
 }
 
 export class FeeService {
@@ -185,7 +188,7 @@ export class FeeService {
   }> {
     const stats = await this.getFeeStats();
     const estimatedFeeStroops = stats.recommendedFeeStroops * operationCount;
-    const estimatedFeeXLM = (estimatedFeeStroops / 1e7).toFixed(7);
+    const estimatedFeeXLM = formatDecimal(toDecimal(estimatedFeeStroops).dividedBy(1e7));
 
     return {
       estimatedFeeStroops,
@@ -202,7 +205,7 @@ export class FeeService {
    *
    * Throws if the asset code is unknown.
    */
-  calculateAssetFee(assetCode: string, amount: number): AssetFeeResult {
+  calculateAssetFee(assetCode: string, amount: number | string): AssetFeeResult {
     const asset = getAsset(assetCode);
     if (!asset) {
       throw new Error(`Unknown asset: ${assetCode}`);
@@ -213,7 +216,7 @@ export class FeeService {
     return {
       assetCode: asset.code,
       feeType: asset.feeType,
-      inputAmount: amount,
+      inputAmount: Number(formatDecimal(toDecimal(amount))),
       feeAmount,
       feeFixed: asset.feeFixed,
       feePercent: asset.feePercent,

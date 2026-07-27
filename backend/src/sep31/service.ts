@@ -5,6 +5,7 @@ import {
   Sep31TransactionRecord,
   Sep31TransactionStatus,
 } from "./types";
+import { formatDecimal, toDecimal } from "../utils/decimal";
 
 // ─── In-memory store (replace with DB in production) ──────────────────────
 // In the AnchorPoint backend this would be backed by the existing
@@ -28,14 +29,14 @@ function generateMemo(): { memo: string; memo_type: "text" } {
 }
 
 function calculateAmountOut(amountIn: string): string {
-  const raw = parseFloat(amountIn);
-  const fee = raw * FEE_PERCENT + FEE_FIXED;
-  return (raw - fee).toFixed(7);
+  const raw = toDecimal(amountIn);
+  const fee = raw.times(FEE_PERCENT).plus(FEE_FIXED);
+  return formatDecimal(raw.minus(fee));
 }
 
 function calculateFee(amountIn: string): string {
-  const raw = parseFloat(amountIn);
-  return (raw * FEE_PERCENT + FEE_FIXED).toFixed(7);
+  const raw = toDecimal(amountIn);
+  return formatDecimal(raw.times(FEE_PERCENT).plus(FEE_FIXED));
 }
 
 // ─── Service ───────────────────────────────────────────────────────────────

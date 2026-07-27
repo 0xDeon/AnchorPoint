@@ -144,6 +144,11 @@ describe('computeAssetFee', () => {
     expect(computeAssetFee(asset, 5)).toBe(1.0);
   });
 
+  it('tiered: preserves precision for fractional amounts', () => {
+    const asset = makeAsset({ feeType: 'tiered', feeFixed: 0.1, feePercent: 0.005 });
+    expect(computeAssetFee(asset, '0.3')).toBe(0.1015);
+  });
+
   it('returns 0 when all fee fields are 0', () => {
     const asset = makeAsset({ feeType: 'percentage', feePercent: 0 });
     expect(computeAssetFee(asset, 100)).toBe(0);
