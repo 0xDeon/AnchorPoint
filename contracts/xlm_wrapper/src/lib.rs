@@ -35,6 +35,8 @@ pub enum DataKey {
     LendingAuthorized(Address),
     /// Emergency pause state
     Paused,
+    /// Maximum total supply cap for wrapped tokens
+    MaxSupply,
 }
 
 /// XLM Wrapper Contract
@@ -91,13 +93,20 @@ impl XLMWrapper {
         token::Client::new(&env, &native_asset)
             .transfer(&from, &contract_addr, &amount);
         
+        // Enforce supply cap if one has been set
+        let supply: i128 = env.storage().instance().get(&DataKey::TotalSupply).unwrap_or(0);
+        if let Some(max_supply) = env.storage().instance().get::<_, i128>(&DataKey::MaxSupply) {
+            if supply.checked_add(amount).unwrap_or(i128::MAX) > max_supply {
+                panic!("SupplyCapExceeded");
+            }
+        }
+
         // Mint wXLM to user (1:1 ratio)
         let bal = Self::balance_of(env.clone(), from.clone());
         env.storage()
             .persistent()
             .set(&DataKey::Balance(from.clone()), &(bal + amount));
-        
-        let supply: i128 = env.storage().instance().get(&DataKey::TotalSupply).unwrap_or(0);
+
         env.storage()
             .instance()
             .set(&DataKey::TotalSupply, &(supply + amount));
@@ -393,6 +402,35 @@ impl XLMWrapper {
     // ============================================================================
     // Admin Functions
     // ============================================================================
+
+    /// Set maximum total supply cap for wrapped tokens
+    /// Pass `0` to remove the cap entirely.
+    ///
+    /// # Arguments
+    /// * `admin` - Administrator address
+    /// * `max_supply` - New cap; set to 0 to disable
+    pub fn set_max_supply(env: Env, admin: Address, max_supply: i128) {
+        admin.require_auth();
+        let stored_admin: Address = env.storage().instance().get(&DataKey::Admin).expect("admin not set");
+        assert!(admin == stored_admin, "unauthorized");
+        assert!(max_supply >= 0, "max_supply must be non-negative");
+
+        if max_supply == 0 {
+            env.storage().instance().remove(&DataKey::MaxSupply);
+        } else {
+            env.storage().instance().set(&DataKey::MaxSupply, &max_supply);
+        }
+        env.events()
+            .publish((symbol_short!("set_cap"), admin), max_supply);
+    }
+
+    /// Return current supply cap; returns 0 when no cap is set.
+    pub fn get_max_supply(env: Env) -> i128 {
+        env.storage()
+            .instance()
+            .get(&DataKey::MaxSupply)
+            .unwrap_or(0)
+    }
 
     /// Pause deposits and withdrawals (emergency function)
     pub fn pause(env: Env, admin: Address) {
@@ -785,6 +823,48 @@ mod tests {
         te.client.deposit(&user, &1000);
         te.client.pause(&te.admin);
         te.client.withdraw(&user, &500);
+    }
+
+    #[test]
+    fn test_set_and_get_max_supply() {
+        let te = setup();
+        assert_eq!(te.client.get_max_supply(), 0);
+        te.client.set_max_supply(&te.admin, &5000);
+        assert_eq!(te.client.get_max_supply(), 5000);
+    }
+
+    #[test]
+    fn test_deposit_within_cap() {
+        let te = setup();
+        te.client.set_max_supply(&te.admin, &2000);
+        let user = Address::generate(&te.env);
+        fund_user(&te, &user, 2000);
+        te.client.deposit(&user, &2000);
+        assert_eq!(te.client.total_supply(), 2000);
+    }
+
+    #[test]
+    #[should_panic(expected = "SupplyCapExceeded")]
+    fn test_deposit_exceeds_cap_panics() {
+        let te = setup();
+        te.client.set_max_supply(&te.admin, &500);
+        let user = Address::generate(&te.env);
+        fund_user(&te, &user, 1000);
+        te.client.deposit(&user, &1000);
+    }
+
+    #[test]
+    fn test_remove_cap_by_setting_zero() {
+        let te = setup();
+        te.client.set_max_supply(&te.admin, &500);
+        assert_eq!(te.client.get_max_supply(), 500);
+        te.client.set_max_supply(&te.admin, &0);
+        assert_eq!(te.client.get_max_supply(), 0);
+        // Deposit should now succeed without cap enforcement
+        let user = Address::generate(&te.env);
+        fund_user(&te, &user, 1000);
+        te.client.deposit(&user, &1000);
+        assert_eq!(te.client.total_supply(), 1000);
     }
 
     #[test]
