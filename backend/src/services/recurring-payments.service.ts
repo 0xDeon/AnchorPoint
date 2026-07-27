@@ -223,18 +223,43 @@ export class RecurringPaymentsService {
     let processed = 0;
 
     for (const schedule of dueSchedules) {
-      const run = await prisma.recurringPaymentRun.create({
-        data: {
-          schedule: {
-            connect: {
-              id: schedule.id,
+      // Atomic schedule fetch & status lock inside prisma.$transaction to prevent concurrent worker race conditions
+      const claim = await prisma.$transaction(async (tx) => {
+        const currentSchedule = await tx.recurringPaymentSchedule.findUnique({
+          where: { id: schedule.id },
+        });
+
+        // Skip schedule execution if status is already PROCESSING or not ACTIVE
+        if (!currentSchedule || currentSchedule.status === 'PROCESSING') {
+          return null;
+        }
+
+        await tx.recurringPaymentSchedule.update({
+          where: { id: schedule.id },
+          data: { status: 'PROCESSING' },
+        });
+
+        const run = await tx.recurringPaymentRun.create({
+          data: {
+            schedule: {
+              connect: {
+                id: schedule.id,
+              },
             },
+            status: 'PROCESSING',
+            attempt: 1,
+            startedAt: new Date(),
           },
-          status: 'PROCESSING',
-          attempt: 1,
-          startedAt: new Date(),
-        },
+        });
+
+        return run;
       });
+
+      if (!claim) {
+        continue;
+      }
+
+      const run = claim;
 
       try {
         const sourceSecretKey = config.STELLAR_DISTRIBUTION_SECRET;
@@ -267,6 +292,7 @@ export class RecurringPaymentsService {
           prisma.recurringPaymentSchedule.update({
             where: { id: schedule.id },
             data: {
+              status: 'ACTIVE',
               lastRunAt: now,
               nextRunAt,
             },
@@ -296,6 +322,7 @@ export class RecurringPaymentsService {
           prisma.recurringPaymentSchedule.update({
             where: { id: schedule.id },
             data: {
+              status: 'ACTIVE',
               lastRunAt: now,
               nextRunAt,
             },
