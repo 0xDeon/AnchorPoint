@@ -280,4 +280,83 @@ router.post('/transactions/withdraw/interactive', async (req: Request, res: Resp
   return res.json(response);
 });
 
+/**
+ * @swagger
+ * /sep24/transaction:
+ *   get:
+ *     summary: SEP-24 Transaction Status
+ *     description: SEP-24 Transaction Status Endpoint. Returns details of a specific transaction by id, stellar_transaction_id, or external_transaction_id.
+ *     tags: [SEP-24]
+ *     parameters:
+ *       - in: query
+ *         name: id
+ *         schema:
+ *           type: string
+ *         description: Anchor transaction ID
+ *       - in: query
+ *         name: stellar_transaction_id
+ *         schema:
+ *           type: string
+ *         description: Stellar transaction hash
+ *       - in: query
+ *         name: external_transaction_id
+ *         schema:
+ *           type: string
+ *         description: External transaction ID
+ *     responses:
+ *       200:
+ *         description: Transaction details
+ *       400:
+ *         description: Missing query parameter or missing stellar transaction hash
+ *       404:
+ *         description: Transaction not found
+ */
+router.get('/transaction', async (req: Request, res: Response) => {
+  const { id, stellar_transaction_id, external_transaction_id } = req.query as Record<string, string>;
+
+  if (!id && !stellar_transaction_id && !external_transaction_id) {
+    return res.status(400).json({ error: 'One of id, stellar_transaction_id, or external_transaction_id is required' });
+  }
+
+  try {
+    const transaction = await prisma.transaction.findFirst({
+      where: {
+        ...(id && { id }),
+        ...(stellar_transaction_id && { stellarTxId: stellar_transaction_id }),
+        ...(external_transaction_id && { externalId: external_transaction_id }),
+      },
+    });
+
+    if (!transaction) {
+      return res.status(404).json({ error: 'Transaction not found' });
+    }
+
+    // Strict null check guard for stellar transaction hash
+    const stellarTxHash = transaction.stellarTxId ?? stellar_transaction_id ?? null;
+    if (!stellarTxHash) {
+      return res.status(400).json({ error: 'Stellar transaction hash is missing or invalid' });
+    }
+
+    const validHash: string = stellarTxHash;
+
+    return res.json({
+      transaction: {
+        id: transaction.id,
+        kind: transaction.type.toLowerCase(),
+        status: transaction.status.toLowerCase(),
+        amount_in: transaction.type === 'DEPOSIT' ? transaction.amount : undefined,
+        amount_out: transaction.type === 'WITHDRAW' ? transaction.amount : undefined,
+        asset_code: transaction.assetCode,
+        stellar_transaction_id: validHash,
+        external_transaction_id: transaction.externalId ?? undefined,
+        started_at: transaction.createdAt.toISOString(),
+        completed_at: transaction.status === 'COMPLETED' ? transaction.updatedAt.toISOString() : undefined,
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({ error: 'Failed to fetch transaction' });
+  }
+});
+
 export default router;
+

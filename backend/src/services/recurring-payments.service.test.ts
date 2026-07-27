@@ -247,6 +247,11 @@ describe('RecurringPaymentsService', () => {
         },
       ]);
 
+      prisma.recurringPaymentSchedule.findUnique.mockResolvedValue({
+        id: 'schedule_1',
+        status: 'ACTIVE',
+      });
+
       prisma.recurringPaymentRun.create.mockResolvedValue({
         id: 'run_1',
         status: 'PROCESSING',
@@ -254,8 +259,11 @@ describe('RecurringPaymentsService', () => {
         startedAt: now,
       });
 
-    prisma.$transaction.mockImplementation(async (callbacks: any[]) => {
-        return Promise.all(callbacks);
+      prisma.$transaction.mockImplementation(async (arg: any) => {
+        if (typeof arg === 'function') {
+          return arg(prisma);
+        }
+        return Promise.all(arg);
       });
 
       const count = await service.processDueSchedules({ now });
@@ -280,6 +288,11 @@ describe('RecurringPaymentsService', () => {
         },
       ]);
 
+      prisma.recurringPaymentSchedule.findUnique.mockResolvedValue({
+        id: 'schedule_1',
+        status: 'ACTIVE',
+      });
+
       prisma.recurringPaymentRun.create.mockResolvedValue({
         id: 'run_1',
         status: 'PROCESSING',
@@ -287,13 +300,53 @@ describe('RecurringPaymentsService', () => {
         startedAt: now,
       });
 
-      prisma.$transaction.mockImplementation(async (callbacks: any[]) => Promise.all(callbacks));
+      prisma.$transaction.mockImplementation(async (arg: any) => {
+        if (typeof arg === 'function') {
+          return arg(prisma);
+        }
+        return Promise.all(arg);
+      });
 
       mockBatchPaymentService.executeBatch.mockRejectedValue(new Error('Payment failed'));
 
       const count = await service.processDueSchedules({ now });
 
       expect(count).toBe(1);
+    });
+
+    it('should skip schedule execution if status is already PROCESSING (concurrent execution test)', async () => {
+      const { prisma } = require('../lib/prisma');
+      const now = new Date('2026-04-26T12:00:00Z');
+
+      prisma.recurringPaymentSchedule.findMany.mockResolvedValue([
+        {
+          id: 'schedule_1',
+          destination: mockDestination,
+          assetCode: 'XLM',
+          amount: '10.0',
+          cron: '0 0 * * *',
+          status: 'ACTIVE',
+          nextRunAt: new Date('2026-04-26T00:00:00Z'),
+          user: { publicKey: mockUser },
+        },
+      ]);
+
+      prisma.recurringPaymentSchedule.findUnique.mockResolvedValue({
+        id: 'schedule_1',
+        status: 'PROCESSING',
+      });
+
+      prisma.$transaction.mockImplementation(async (arg: any) => {
+        if (typeof arg === 'function') {
+          return arg(prisma);
+        }
+        return Promise.all(arg);
+      });
+
+      const count = await service.processDueSchedules({ now });
+
+      expect(count).toBe(0);
+      expect(mockBatchPaymentService.executeBatch).not.toHaveBeenCalled();
     });
 
     it('should respect limit parameter', async () => {
