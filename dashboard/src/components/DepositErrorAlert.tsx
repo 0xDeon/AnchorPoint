@@ -30,7 +30,7 @@ const ERROR_COLORS: Record<DepositError['type'], string> = {
   amount: 'border-amber-500/30 bg-amber-500/10 text-amber-300',
 };
 
-const ERROR_ICONS: Record<DepositError['type'], 'alert' | 'network' | 'user' | 'server' | 'package' | 'dollar'> = {
+const _ERROR_ICONS: Record<DepositError['type'], 'alert' | 'network' | 'user' | 'server' | 'package' | 'dollar'> = {
   validation: 'alert',
   network: 'network',
   kyc: 'user',
