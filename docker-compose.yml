@@ -123,6 +123,7 @@ services:
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
       - ./infra/monitoring/prometheus-alerts.yml:/etc/prometheus/rules/prometheus-alerts.yml
+      - ./infra/prometheus/alerts.rules.yml:/etc/prometheus/rules/alerts.rules.yml
       - prometheus-data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
