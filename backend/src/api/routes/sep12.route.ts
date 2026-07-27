@@ -2,18 +2,14 @@ import { Router, Request, Response, NextFunction } from 'express';
 import multer from 'multer';
 import fs from 'fs';
 import path from 'path';
+import { z } from 'zod';
 import { sep12Controller } from '../controllers/sep12.controller';
 import { authMiddleware } from '../middleware/auth.middleware';
+import { validate } from '../middleware/validate.middleware';
+import { isValidStellarPublicKey } from '../../utils/stellar-address';
 import { config } from '../../config/env';
 
 const router = Router();
-
-export const ALLOWED_MIME_TYPES = new Set([
-  'image/jpeg',
-  'image/png',
-  'image/webp',
-  'application/pdf',
-]);
 
 // Ensure upload directory exists
 const uploadDir = path.join(process.cwd(), 'uploads/kyc');
@@ -32,15 +28,52 @@ const storage = multer.diskStorage({
   }
 });
 
-const upload = multer({
-  storage,
-  fileFilter: (_req, file, cb) => {
-    if (ALLOWED_MIME_TYPES.has(file.mimetype)) {
-      cb(null, true);
-    } else {
-      cb(new multer.MulterError('LIMIT_UNEXPECTED_FILE', file.fieldname));
-    }
-  },
+const upload = multer({ storage: storage });
+
+const stellarAccountSchema = z
+  .string()
+  .min(1, 'account is required')
+  .refine(isValidStellarPublicKey, { message: 'account must be a valid Stellar public key' });
+
+/** GET /customer — query params */
+export const getCustomerQuerySchema = z.object({
+  account: stellarAccountSchema,
+  memo: z.string().optional(),
+  memo_type: z.enum(['id', 'text', 'hash']).optional(),
+  type: z.string().optional(),
+  lang: z.string().optional(),
+});
+
+/** PUT /customer — request body (JSON / form fields after multer) */
+export const putCustomerBodySchema = z
+  .object({
+    account: stellarAccountSchema,
+    memo: z.string().optional(),
+    memo_type: z.enum(['id', 'text', 'hash']).optional(),
+    first_name: z.string().min(1).optional(),
+    last_name: z.string().min(1).optional(),
+    email_address: z.string().email('email_address must be a valid email').optional(),
+    mobile_number: z.string().optional(),
+    birth_date: z.string().optional(),
+    bank_account_number: z.string().optional(),
+    bank_number: z.string().optional(),
+    bank_phone_number: z.string().optional(),
+    tax_id: z.string().optional(),
+    tax_id_name: z.string().optional(),
+    address: z.string().optional(),
+    city: z.string().optional(),
+    state_or_province: z.string().optional(),
+    postal_code: z.string().optional(),
+    country_code: z.string().optional(),
+    ip_address: z.string().optional(),
+    photo_id_type: z.string().optional(),
+    photo_id_number: z.string().optional(),
+  })
+  .passthrough();
+
+/** DELETE /customer/:account — path params */
+export const deleteCustomerParamsSchema = z.object({
+  account: stellarAccountSchema,
 });
 
 /**
@@ -68,7 +101,13 @@ function validateUploadFileSize(req: Request, res: Response, next: NextFunction)
  *     summary: Upload customer information and documents
  *     tags: [SEP-12]
  */
-router.put('/customer', authMiddleware, upload.any(), sep12Controller.putCustomer.bind(sep12Controller));
+router.put(
+  '/customer',
+  authMiddleware,
+  upload.any(),
+  validate({ body: putCustomerBodySchema }),
+  sep12Controller.putCustomer.bind(sep12Controller)
+);
 
 /**
  * @swagger
@@ -77,7 +116,11 @@ router.put('/customer', authMiddleware, upload.any(), sep12Controller.putCustome
  *     summary: Get customer KYC status
  *     tags: [SEP-12]
  */
-router.get('/customer', sep12Controller.getCustomer.bind(sep12Controller));
+router.get(
+  '/customer',
+  validate({ query: getCustomerQuerySchema }),
+  sep12Controller.getCustomer.bind(sep12Controller)
+);
 
 /**
  * @swagger
@@ -86,33 +129,11 @@ router.get('/customer', sep12Controller.getCustomer.bind(sep12Controller));
  *     summary: Delete customer PII
  *     tags: [SEP-12]
  */
-router.delete('/customer/:account', sep12Controller.deleteCustomer.bind(sep12Controller));
-
-/**
- * @swagger
- * /sep12/customer/upload-url:
- *   get:
- *     summary: Get a pre-signed URL for uploading KYC documents
- *     description: >
- *       Returns a short-lived, pre-signed upload URL for a KYC document.
- *       Requires a valid SEP-10 session JWT (Bearer token).
- *     security:
- *       - BearerAuth: []
- *     tags: [SEP-12]
- *     parameters:
- *       - in: query
- *         name: field
- *         required: true
- *         schema:
- *           type: string
- *         description: The KYC field name the upload is intended for (e.g. id_photo_front)
- *     responses:
- *       200:
- *         description: Pre-signed upload URL returned successfully
- *       401:
- *         description: Unauthorized – missing or invalid SEP-10 session token
- */
-router.get('/customer/upload-url', authMiddleware, sep12Controller.getUploadUrl.bind(sep12Controller));
+router.delete(
+  '/customer/:account',
+  validate({ params: deleteCustomerParamsSchema }),
+  sep12Controller.deleteCustomer.bind(sep12Controller)
+);
 
 /**
  * @swagger
@@ -140,14 +161,5 @@ router.post('/customer/upload-confirm', authMiddleware, sep12Controller.confirmU
  *     tags: [SEP-12]
  */
 router.post('/webhook', sep12Controller.handleWebhook.bind(sep12Controller));
-
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-router.use((err: unknown, _req: import('express').Request, res: import('express').Response, _next: import('express').NextFunction) => {
-  if (err instanceof multer.MulterError && err.code === 'LIMIT_UNEXPECTED_FILE') {
-    const allowed = Array.from(ALLOWED_MIME_TYPES).join(', ');
-    return res.status(400).json({ error: `Unsupported file type. Allowed types: ${allowed}` });
-  }
-  _next(err);
-});
 
 export default router;

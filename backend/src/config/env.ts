@@ -159,6 +159,64 @@ if (!parsed.success) {
 export const config = parsed.data;
 export type Config = typeof config;
 
+const SENSITIVE_CONFIG_KEYS = [
+  'DATABASE_URL',
+  'JWT_SECRET',
+  'ANCHOR_SECRET_KEY',
+  'STELLAR_DISTRIBUTION_SECRET',
+  'STELLAR_FEE_BUMP_SECRET',
+  'RELAYER_SECRET_KEY',
+  'WEBHOOK_SECRET',
+  'SIGNING_KEY',
+] as const;
+
+/**
+ * Decrypt KMS/Vault-prefixed sensitive env values onto the live config object.
+ * Falls back to local plaintext in development when KMS is unavailable.
+ * Call once during application startup (before serving traffic).
+ */
+export async function hydrateEncryptedConfigSecrets(): Promise<void> {
+  // Lazy import avoids circular dependency at module load time
+  const {
+    resolveSensitiveEnvSecrets,
+    buildKeyManagementConfigFromEnv,
+    initializeKeyManagement,
+  } = await import('../lib/key-management.service');
+
+  const kmConfig = buildKeyManagementConfigFromEnv({
+    KEY_MANAGEMENT_BACKEND: config.KEY_MANAGEMENT_BACKEND,
+    AWS_KMS_KEY_ARN: config.AWS_KMS_KEY_ARN,
+    AWS_REGION: config.AWS_REGION,
+    AWS_ACCESS_KEY_ID: config.AWS_ACCESS_KEY_ID,
+    AWS_SECRET_ACCESS_KEY: config.AWS_SECRET_ACCESS_KEY,
+    VAULT_ADDR: config.VAULT_ADDR,
+    VAULT_TOKEN: config.VAULT_TOKEN,
+    VAULT_TRANSIT_PATH: config.VAULT_TRANSIT_PATH,
+  });
+
+  if (kmConfig) {
+    try {
+      initializeKeyManagement(kmConfig);
+    } catch {
+      // Initialization failures are handled by decrypt fallbacks / startup checks
+    }
+  }
+
+  const current: Record<string, string | undefined> = {};
+  for (const key of SENSITIVE_CONFIG_KEYS) {
+    current[key] = (config as Record<string, unknown>)[key] as string | undefined;
+  }
+
+  const resolved = await resolveSensitiveEnvSecrets(current, [...SENSITIVE_CONFIG_KEYS]);
+
+  for (const key of SENSITIVE_CONFIG_KEYS) {
+    if (resolved[key] !== undefined) {
+      (config as Record<string, unknown>)[key] = resolved[key];
+      process.env[key] = resolved[key];
+    }
+  }
+}
+
 const uiFieldRequirementSchema = z.object({
   key: z.string().min(1, 'Field key is required'),
   label: z.string().min(1, 'Field label is required'),
