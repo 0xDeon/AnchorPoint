@@ -44,6 +44,38 @@ const envSchema = z.object({
     .pipe(z.number().int().min(0)),
   STELLAR_NETWORK: z.enum(['testnet', 'public', 'futurenet']).default('testnet'),
   RECURRING_PAYMENTS_WORKER_CRON: z.string().default('*/1 * * * *'),
+  // Exponential backoff configuration for the recurring payments retry worker.
+  // Max number of retry attempts for a single occurrence before giving up and
+  // deferring to the next scheduled (cron) run.
+  RECURRING_PAYMENTS_MAX_RETRIES: z
+    .string()
+    .default('5')
+    .transform((val: string) => parseInt(val, 10))
+    .pipe(z.number().int().min(0).max(20)),
+  // Base delay (ms) for the first retry.
+  RECURRING_PAYMENTS_BACKOFF_BASE_MS: z
+    .string()
+    .default('30000')
+    .transform((val: string) => parseInt(val, 10))
+    .pipe(z.number().int().min(0)),
+  // Upper bound (ms) on any single backoff delay.
+  RECURRING_PAYMENTS_BACKOFF_MAX_MS: z
+    .string()
+    .default('3600000')
+    .transform((val: string) => parseInt(val, 10))
+    .pipe(z.number().int().min(0)),
+  // Multiplier applied per attempt (delay = base * multiplier^(attempt-1)).
+  RECURRING_PAYMENTS_BACKOFF_MULTIPLIER: z
+    .string()
+    .default('2')
+    .transform((val: string) => parseFloat(val))
+    .pipe(z.number().min(1)),
+  // Fractional jitter (0..1) applied to each delay to avoid thundering herds.
+  RECURRING_PAYMENTS_BACKOFF_JITTER: z
+    .string()
+    .default('0.2')
+    .transform((val: string) => parseFloat(val))
+    .pipe(z.number().min(0).max(1)),
   STELLAR_NETWORK_PASSPHRASE: z
     .string()
     .default('Test SDF Network ; September 2015'),
@@ -98,6 +130,21 @@ const envSchema = z.object({
   ANCHOR_PUBLIC_KEY: z.string().optional(), // For SEP-10 challenges
   ANCHOR_SECRET_KEY: z.string().optional(), // For SEP-10 challenges
   REGISTRY_CONTRACT_ID: z.string().optional(), // Registry contract address
+  // SEP-40 oracle (price feed) contract address consumed by the price feed
+  // subscription manager.
+  SEP40_ORACLE_CONTRACT_ID: z.string().optional(),
+  // Default polling interval (ms) for SEP-40 price feed subscriptions.
+  SEP40_POLL_INTERVAL_MS: z
+    .string()
+    .default('60000')
+    .transform((val: string) => parseInt(val, 10))
+    .pipe(z.number().int().min(1000)),
+  // Maximum age (ms) of an on-chain price before it is considered stale.
+  SEP40_MAX_PRICE_AGE_MS: z
+    .string()
+    .default('300000')
+    .transform((val: string) => parseInt(val, 10))
+    .pipe(z.number().int().min(0)),
   SEP12_MAX_FILE_SIZE_MB: z
     .string()
     .default('20')
