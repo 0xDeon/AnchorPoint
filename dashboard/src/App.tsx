@@ -1,4 +1,4 @@
-import React, { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
+import React, { lazy, Suspense, useCallback, useEffect, useMemo, useState, createContext, useContext } from 'react';
 import {
   LayoutDashboard,
   ArrowUpRight,
@@ -13,6 +13,8 @@ import {
   Bell,
   RefreshCcw,
   Activity,
+  Sun,
+  Moon,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { UiConfig } from './types';
@@ -21,6 +23,16 @@ import { NotificationBell } from './components/NotificationBell';
 import { UserAvatarDropdown } from './components/UserAvatarDropdown';
 import { CopyablePublicKey } from './components/CopyablePublicKey';
 import { FreighterAdapter } from './lib/wallet/FreighterAdapter';
+
+const ThemeContext = createContext<{
+  theme: 'light' | 'dark';
+  toggleTheme: () => void;
+}>({
+  theme: 'dark',
+  toggleTheme: () => {},
+});
+
+export const useTheme = () => useContext(ThemeContext);
 
 const DashboardOverview = lazy(() => import('./components/DashboardOverview'));
 const TransactionHistory = lazy(() => import('./components/TransactionHistory'));
@@ -138,7 +150,20 @@ const App = () => {
   const [walletStatus, setWalletStatus] = useState<'idle' | 'connecting' | 'error'>('idle');
   const [walletError, setWalletError] = useState('');
   const [walletSessionResetCounter, setWalletSessionResetCounter] = useState(0);
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    const stored = localStorage.getItem('theme');
+    if (stored === 'light' || stored === 'dark') return stored;
+    return 'dark';
+  });
   const walletAdapter = useMemo(() => new FreighterAdapter(), []);
+
+  const toggleTheme = useCallback(() => {
+    setTheme((prev) => {
+      const next = prev === 'dark' ? 'light' : 'dark';
+      localStorage.setItem('theme', next);
+      return next;
+    });
+  }, []);
 
   const clearClientSessionState = useCallback(() => {
     const shouldClearKey = (key: string) => /token|session|wallet|transaction|balance/i.test(key);
@@ -230,6 +255,12 @@ const App = () => {
     };
   }, []);
 
+  useEffect(() => {
+    const root = document.documentElement;
+    root.classList.remove('light', 'dark');
+    root.classList.add(theme);
+  }, [theme]);
+
   const menuItems = useMemo(
     () => [
       { id: 'dashboard', icon: LayoutDashboard, label: 'Overview' },
@@ -260,6 +291,7 @@ const App = () => {
   };
 
   return (
+    <ThemeContext.Provider value={{ theme, toggleTheme }}>
     <div
       className="min-h-screen flex"
       style={
@@ -379,6 +411,7 @@ const App = () => {
               apiBaseUrl={apiBaseUrl}
               onViewAll={() => setActiveTab('notifications')}
             />
+            <ThemeToggle />
             <div className="flex min-w-0 items-center gap-2">
               {wallet ? (
                 <CopyablePublicKey publicKey={wallet.publicKey} label={`${wallet.network} public key`} />
@@ -487,6 +520,23 @@ const App = () => {
         </section>
       </main>
     </div>
+    </ThemeContext.Provider>
+  );
+};
+
+const ThemeToggle = () => {
+  const { theme, toggleTheme } = useTheme();
+
+  return (
+    <button
+      type="button"
+      onClick={toggleTheme}
+      aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`}
+      className="flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-300 transition-all hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+    >
+      {theme === 'dark' ? <Sun size={16} aria-hidden="true" /> : <Moon size={16} aria-hidden="true" />}
+      <span className="hidden sm:inline">{theme === 'dark' ? 'Light' : 'Dark'}</span>
+    </button>
   );
 };
 
