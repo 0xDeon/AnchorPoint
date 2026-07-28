@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
 import { generateStorageKey } from '../utils/storage-key';
 
-export type UploadStatus = 'PENDING' | 'COMPLETED' | 'EXPIRED';
+export type UploadStatus = 'PENDING' | 'COMPLETED' | 'EXPIRED' | 'EXPIRED_DELETED';
 
 export interface UploadRecord {
   uploadId: string;
