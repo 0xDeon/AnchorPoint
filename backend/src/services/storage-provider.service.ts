@@ -1,5 +1,48 @@
 import logger from '../utils/logger';
 
+export const MAX_UPLOAD_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
+
+const MAGIC_BYTES: Record<string, { bytes: number[]; offset?: number }> = {
+  'image/jpeg': { bytes: [0xff, 0xd8, 0xff] },
+  'image/png':  { bytes: [0x89, 0x50, 0x4e, 0x47] },
+  'application/pdf': { bytes: [0x25, 0x50, 0x44, 0x46] }, // %PDF
+};
+
+/**
+ * Throws a StorageProviderError when `size` exceeds MAX_UPLOAD_SIZE_BYTES.
+ */
+export function validateUploadSize(size: number): void {
+  if (size > MAX_UPLOAD_SIZE_BYTES) {
+    throw new StorageProviderError(
+      `File size ${size} bytes exceeds the maximum allowed size of ${MAX_UPLOAD_SIZE_BYTES} bytes (10 MB)`
+    );
+  }
+}
+
+/**
+ * Verifies that `buffer`'s magic bytes match `declaredMimeType`.
+ * Throws a StorageProviderError for unsupported or mismatched MIME types.
+ */
+export function validateKycUpload(buffer: Buffer, declaredMimeType: string): void {
+  const expected = MAGIC_BYTES[declaredMimeType];
+  if (!expected) {
+    throw new StorageProviderError(
+      `Unsupported MIME type: ${declaredMimeType}. Allowed: ${Object.keys(MAGIC_BYTES).join(', ')}`
+    );
+  }
+  if (buffer.length < expected.bytes.length) {
+    throw new StorageProviderError(
+      `File too small to determine type for declared MIME type: ${declaredMimeType}`
+    );
+  }
+  const matches = expected.bytes.every((byte, i) => buffer[i] === byte);
+  if (!matches) {
+    throw new StorageProviderError(
+      `File magic bytes do not match declared MIME type: ${declaredMimeType}. The file may be masquerading as a different type.`
+    );
+  }
+}
+
 /**
  * Provider-agnostic interface for cloud object storage.
  * Implementations exist for S3 and GCS; the mock is used in development/test.
