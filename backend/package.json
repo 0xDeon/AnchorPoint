@@ -26,6 +26,7 @@
     "migrate:verify": "ts-node scripts/verify-migrations.ts",
     "migrate:check": "ts-node scripts/migration-integrity-checker.ts",
     "migrate:rollback": "ts-node scripts/generate-rollback.ts",
+    "migrate:rollback:verify": "ts-node scripts/rollback.ts",
     "migrate:status": "prisma migrate status",
     "migrate:validate-env": "node scripts/validate-migration-env.js",
     "migrate:bootstrap": "bash scripts/bootstrap-db.sh",
