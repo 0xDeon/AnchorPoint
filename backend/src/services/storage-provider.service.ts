@@ -9,6 +9,8 @@ export interface StorageProvider {
   generatePresignedPutUrl(key: string, contentType: string, expiresInSeconds: number): Promise<string>;
   /** Return true when the object at `key` exists in the bucket. */
   objectExists(key: string): Promise<boolean>;
+  /** Permanently delete the object at `key` from the bucket. */
+  deleteObject(key: string): Promise<void>;
 }
 
 export type StorageProviderKind = 'mock' | 's3' | 'gcs';
@@ -78,6 +80,10 @@ export class MockStorageProvider implements StorageProvider {
     return this.uploadedKeys.has(key);
   }
 
+  async deleteObject(key: string): Promise<void> {
+    this.uploadedKeys.delete(key);
+  }
+
   /** Test helper: simulate a completed upload for a key. */
   _markUploaded(key: string): void {
     this.uploadedKeys.add(key);
@@ -105,6 +111,10 @@ export class S3StorageProvider implements StorageProvider {
   async objectExists(_key: string): Promise<boolean> {
     return false;
   }
+
+  async deleteObject(_key: string): Promise<void> {
+    // S3 stub: real deletion would use DeleteObjectCommand
+  }
 }
 
 /** Google Cloud Storage implementation of StorageProvider. */
@@ -125,6 +135,10 @@ export class GcsStorageProvider implements StorageProvider {
 
   async objectExists(_key: string): Promise<boolean> {
     return false;
+  }
+
+  async deleteObject(_key: string): Promise<void> {
+    // GCS stub: real deletion would use storage.bucket().file(key).delete()
   }
 }
 
