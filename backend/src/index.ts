@@ -47,8 +47,32 @@ app.disable('x-powered-by');
 app.use(securityHeadersMiddleware);
 const PORT = config.PORT;
 
+const configuredOrigins = process.env.PRODUCTION_CORS_ORIGINS ?? '';
+const allowedOrigins = configuredOrigins
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter((origin) => origin.length > 0);
+
+if (process.env.NODE_ENV === 'production' && allowedOrigins.length === 0) {
+  throw new Error('PRODUCTION_CORS_ORIGINS must be configured in production.');
+}
+
+const fallbackLocalOrigins = ['http://localhost:3000', 'http://127.0.0.1:3000'];
+const effectiveAllowedOrigins = allowedOrigins.length > 0 ? allowedOrigins : fallbackLocalOrigins;
+
 const corsOptions = {
-  origin: process.env.PRODUCTION_CORS_ORIGINS ? process.env.PRODUCTION_CORS_ORIGINS.split(',') : [],
+  origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
+    if (!origin) {
+      return callback(null, true);
+    }
+
+    if (effectiveAllowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    logger.warn(`Blocked CORS origin: ${origin}`);
+    return callback(null, false);
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
@@ -223,13 +247,19 @@ app.use('/sep10', authLimiter, authRouter);
 // SEP-12 KYC routes
 app.use('/sep12', sep12Router);
 
-// Public endpoints — shared Redis-backed rate limit state
-app.use('/sep31', publicLimiter, sep31Router);
-app.use('/sep38', publicLimiter, sep38Router);
-app.use('/info', publicLimiter, infoRouter);
-app.use('/sep24', publicLimiter, sep24Router);
-app.use('/sep6', publicLimiter, sep6Router);
-app.use('/metrics', publicLimiter, metricsRouter);
+// Public endpoints — mounted once with shared Redis-backed rate limiting
+const publicRoutes: Array<[string, express.Router]> = [
+  ['/sep31', sep31Router],
+  ['/sep38', sep38Router],
+  ['/info', infoRouter],
+  ['/sep24', sep24Router],
+  ['/sep6', sep6Router],
+  ['/metrics', metricsRouter],
+];
+
+publicRoutes.forEach(([path, router]) => {
+  app.use(path, publicLimiter, router);
+});
 
 app.use('/api/recurring-payments', recurringPaymentsRouter);
 
