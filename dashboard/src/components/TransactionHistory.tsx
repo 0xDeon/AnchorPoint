@@ -12,6 +12,7 @@ import {
 import { TransactionStatusBadge } from './TransactionStatusBadge';
 import type { TransactionStatus } from './TransactionStatusBadge';
 import { CopyButton } from './Common/CopyButton';
+import { TransactionExporter } from './TransactionExporter';
 
 type TransactionType = 'Deposit' | 'Withdrawal';
 type SortKey = 'type' | 'asset' | 'amount' | 'status' | 'date';
@@ -216,6 +217,14 @@ export const TransactionHistory = () => {
             ))}
           </select>
         </div>
+      </div>
+
+      <div className="flex justify-end">
+        <TransactionExporter
+          transactions={sorted}
+          totalCount={sorted.length}
+          filters={{ query, status: statusFilter, dateFrom, dateTo }}
+        />
       </div>
 
       <div className="glass-card overflow-x-auto">
