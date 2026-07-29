@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { TransactionStatusBadge } from './TransactionStatusBadge';
 import type { TransactionStatus } from './TransactionStatusBadge';
+import { CopyButton } from './Common/CopyButton';
 
 type TransactionType = 'Deposit' | 'Withdrawal';
 type SortKey = 'type' | 'asset' | 'amount' | 'status' | 'date';
@@ -296,7 +297,12 @@ export const TransactionHistory = () => {
                   <td className="p-4 text-sm text-slate-400" data-label="Date">
                     <time dateTime={tx.date}>{tx.date}</time>
                   </td>
-                  <td className="p-4 font-mono text-xs text-slate-500" data-label="Reference">{tx.reference}</td>
+                  <td className="p-4 font-mono text-xs text-slate-500" data-label="Reference">
+                    <span className="inline-flex items-center gap-1.5">
+                      {tx.reference}
+                      <CopyButton value={tx.reference} label="Transaction reference" />
+                    </span>
+                  </td>
                 </tr>
               ))
             )}
