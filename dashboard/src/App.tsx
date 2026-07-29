@@ -440,7 +440,9 @@ const App = () => {
               transition={{ duration: 0.2 }}
             >
               <Suspense fallback={<TabFallback />}>
-                {activeTab === 'dashboard' && <DashboardOverview uiConfig={uiConfig} />}
+                {activeTab === 'dashboard' && (
+                  <DashboardOverview uiConfig={uiConfig} isLoading={loadingState === 'loading'} />
+                )}
                 {activeTab === 'deposit' && <SEP24Flow type="deposit" uiConfig={uiConfig} />}
                 {activeTab === 'withdraw' && <SEP24Flow type="withdraw" uiConfig={uiConfig} />}
                 {activeTab === 'history' && <TransactionHistory />}
