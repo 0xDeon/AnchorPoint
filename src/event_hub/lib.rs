@@ -81,6 +81,7 @@ impl EventHub {
             anchorpointutils::storage::INSTANCE_EXTEND_TO,
         );
 
+        #[allow(deprecated)]
         env.events()
             .publish((symbol_short!("hub"), symbol_short!("init")), admin);
     }
@@ -109,6 +110,7 @@ impl EventHub {
             .instance()
             .set(&DataKey::RegisteredContracts, &contracts);
 
+        #[allow(deprecated)]
         env.events()
             .publish((symbol_short!("hub"), symbol_short!("reg")), contract);
     }
@@ -133,6 +135,7 @@ impl EventHub {
             .instance()
             .set(&DataKey::RegisteredContracts, &contracts);
 
+        #[allow(deprecated)]
         env.events()
             .publish((symbol_short!("hub"), symbol_short!("unreg")), contract);
     }

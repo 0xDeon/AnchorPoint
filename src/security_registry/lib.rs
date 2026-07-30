@@ -87,20 +87,20 @@ mod tests {
         let client = SecurityRegistryClient::new(&env, &contract_id);
 
         client.initialize(&admin);
-        assert_eq!(client.is_paused(), false);
+        assert!(!client.is_paused());
 
         let initial_ttl = env.as_contract(&contract_id, || env.storage().instance().get_ttl());
         assert!(initial_ttl >= anchorpoint_utils::storage::INSTANCE_EXTEND_TO);
 
         env.mock_all_auths();
         client.pause(&admin);
-        assert_eq!(client.is_paused(), true);
+        assert!(client.is_paused());
 
         let pause_ttl = env.as_contract(&contract_id, || env.storage().instance().get_ttl());
         assert!(pause_ttl >= anchorpoint_utils::storage::INSTANCE_EXTEND_TO);
 
         client.unpause(&admin);
-        assert_eq!(client.is_paused(), false);
+        assert!(!client.is_paused());
 
         let unpause_ttl = env.as_contract(&contract_id, || env.storage().instance().get_ttl());
         assert!(unpause_ttl >= anchorpoint_utils::storage::INSTANCE_EXTEND_TO);
