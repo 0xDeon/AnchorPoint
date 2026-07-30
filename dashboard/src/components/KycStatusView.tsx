@@ -3,6 +3,7 @@ import { ShieldCheck, XCircle, AlertTriangle, RefreshCw, Mail, CheckCircle2, Clo
 import type { UiConfig } from '../types';
 import { RequirementList } from './RequirementList';
 import { KycDocumentUpload } from './KycDocumentUpload';
+import { KycForm } from './KycForm';
 
 export type KycState = 'not_started' | 'pending' | 'approved' | 'rejected';
 
@@ -65,6 +66,7 @@ type KycStatusViewProps = {
 
 export const KycStatusView = ({ uiConfig, apiBaseUrl, account }: KycStatusViewProps) => {
   const [kycState, setKycState] = useState<KycState>('rejected');
+  const [customerCreated, setCustomerCreated] = useState(false);
 
   return (
     <div className="space-y-6">
@@ -113,6 +115,14 @@ export const KycStatusView = ({ uiConfig, apiBaseUrl, account }: KycStatusViewPr
                 title="Required Information"
                 fields={uiConfig.fieldRequirements.kyc.filter((f) => f.type !== 'file')}
               />
+            </div>
+            <div className="mt-8 w-full max-w-xl text-left">
+              <KycForm onSubmit={() => setCustomerCreated(true)} />
+              {customerCreated && (
+                <p className="mt-3 text-sm text-slate-400">
+                  Next, upload the supporting documents below to complete verification.
+                </p>
+              )}
             </div>
             {account ? (
               <KycDocumentUpload

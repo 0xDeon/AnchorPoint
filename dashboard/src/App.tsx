@@ -16,11 +16,13 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { UiConfig } from './types';
-import { LogoMark } from './components/LogoMark';
+import { Sidebar } from './components/Sidebar';
 import { NotificationBell } from './components/NotificationBell';
 import { UserAvatarDropdown } from './components/UserAvatarDropdown';
 import { CopyablePublicKey } from './components/CopyablePublicKey';
+import { WalletModal } from './components/WalletModal';
 import { FreighterAdapter } from './lib/wallet/FreighterAdapter';
+import { I18nProvider, useTranslation } from './i18n/config';
 
 const DashboardOverview = lazy(() => import('./components/DashboardOverview'));
 const TransactionHistory = lazy(() => import('./components/TransactionHistory'));
@@ -137,8 +139,10 @@ const App = () => {
   const [wallet, setWallet] = useState<{ publicKey: string; network: string } | null>(null);
   const [walletStatus, setWalletStatus] = useState<'idle' | 'connecting' | 'error'>('idle');
   const [walletError, setWalletError] = useState('');
+  const [walletModalOpen, setWalletModalOpen] = useState(false);
   const [walletSessionResetCounter, setWalletSessionResetCounter] = useState(0);
   const walletAdapter = useMemo(() => new FreighterAdapter(), []);
+  const { t, language, changeLanguage } = useTranslation();
 
   const clearClientSessionState = useCallback(() => {
     const shouldClearKey = (key: string) => /token|session|wallet|transaction|balance/i.test(key);
@@ -219,7 +223,7 @@ const App = () => {
   }, [handleWalletDisconnect]);
 
   useEffect(() => {
-    const mediaQuery = window.matchMedia('(min-width: 1024px)');
+    const mediaQuery = window.matchMedia('(min-width: 768px)');
     const handleMediaChange = (event: MediaQueryListEvent) => setSidebarOpen(event.matches);
 
     setSidebarOpen(mediaQuery.matches);
@@ -232,17 +236,17 @@ const App = () => {
 
   const menuItems = useMemo(
     () => [
-      { id: 'dashboard', icon: LayoutDashboard, label: 'Overview' },
-      { id: 'deposit', icon: ArrowDownLeft, label: 'Deposit' },
-      { id: 'withdraw', icon: ArrowUpRight, label: 'Withdraw' },
-      { id: 'history', icon: History, label: 'History' },
-      { id: 'sep38', icon: RefreshCcw, label: 'SEP-38 Quote' },
-      { id: 'status', icon: Activity, label: 'Service Status' },
-      { id: 'notifications', icon: Bell, label: 'Notifications' },
-      { id: 'kyc', icon: ShieldCheck, label: 'KYC Status' },
-      { id: 'settings', icon: Settings, label: 'Settings' },
+      { id: 'dashboard', icon: LayoutDashboard, label: t('nav.overview') },
+      { id: 'deposit', icon: ArrowDownLeft, label: t('nav.deposit') },
+      { id: 'withdraw', icon: ArrowUpRight, label: t('nav.withdraw') },
+      { id: 'history', icon: History, label: t('nav.history') },
+      { id: 'sep38', icon: RefreshCcw, label: t('nav.sep38') },
+      { id: 'status', icon: Activity, label: t('nav.status') },
+      { id: 'notifications', icon: Bell, label: t('nav.notifications') },
+      { id: 'kyc', icon: ShieldCheck, label: t('nav.kyc') },
+      { id: 'settings', icon: Settings, label: t('nav.settings') },
     ],
-    [],
+    [t],
   );
 
   const handleConnectWallet = async () => {
@@ -259,7 +263,20 @@ const App = () => {
     }
   };
 
+  const handleWalletOptionSelect = async (walletId: 'freighter' | 'albedo' | 'rango') => {
+    setWalletModalOpen(false);
+
+    if (walletId !== 'freighter') {
+      setWalletStatus('error');
+      setWalletError(`${walletId.charAt(0).toUpperCase()}${walletId.slice(1)} support will be available soon.`);
+      return;
+    }
+
+    await handleConnectWallet();
+  };
+
   return (
+    <I18nProvider>
     <div
       className="min-h-screen flex"
       style={
@@ -272,74 +289,26 @@ const App = () => {
         } as React.CSSProperties
       }
     >
-      {sidebarOpen && (
-        <button
-          type="button"
-          aria-label="Close navigation menu overlay"
-          className="fixed inset-0 z-40 bg-slate-950/70 backdrop-blur-sm lg:hidden"
-          onClick={() => setSidebarOpen(false)}
-        />
-      )}
-      <aside
-        data-testid="sidebar"
-        id="main-sidebar"
-        aria-label="Main navigation"
-        className={`fixed inset-y-0 left-0 z-50 w-[min(18rem,calc(100vw-2rem))] transform border-r border-slate-800 bg-card transition-transform duration-300 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} lg:relative lg:w-64 lg:translate-x-0`}
+      <Sidebar
+        activeTab={activeTab}
+        loadingState={loadingState}
+        menuItems={menuItems}
+        sidebarOpen={sidebarOpen}
+        uiConfig={uiConfig}
+        onClose={() => setSidebarOpen(false)}
+        onSelect={(tabId) => setActiveTab(tabId)}
+      />
+
+      <WalletModal
+        isOpen={walletModalOpen}
+        onClose={() => setWalletModalOpen(false)}
+        onSelect={handleWalletOptionSelect}
       >
-        <div className="p-5 sm:p-6">
-          <div className="mb-8 flex items-center gap-3 sm:mb-10">
-            <LogoMark uiConfig={uiConfig} />
-            <div className="min-w-0">
-              <h1 className="truncate font-display text-xl font-bold tracking-tight">
-                {uiConfig.brandName}
-              </h1>
-              <p className="truncate text-xs uppercase tracking-[0.2em] text-slate-400">
-                Anchor dashboard
-              </p>
-            </div>
-          </div>
-
-          <nav aria-label="Primary navigation">
-            <ul className="space-y-1 list-none p-0 m-0">
-              {menuItems.map((item) => (
-                <li key={item.id}>
-                  <button
-                    onClick={() => {
-                      setActiveTab(item.id);
-                      setSidebarOpen(false);
-                    }}
-                    aria-current={activeTab === item.id ? 'page' : undefined}
-                    className={`flex w-full items-center gap-3 rounded-lg px-4 py-3 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-text ${
-                      activeTab === item.id
-                        ? 'border border-primary/40 bg-primary/10 text-primary-text'
-                        : 'text-slate-400 hover:bg-slate-900 hover:text-slate-200'
-                    }`}
-                  >
-                    <item.icon size={20} aria-hidden="true" />
-                    <span className="font-medium">{item.label}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </nav>
+        <div className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-950/80 px-3 py-2 text-xs text-slate-400">
+          <span>Freighter connection is available now.</span>
+          <span>{walletStatus === 'connecting' ? 'Connecting…' : 'Select a provider to continue'}</span>
         </div>
-
-        <div className="absolute bottom-0 w-full border-t border-slate-800 p-5 sm:p-6">
-          <div className="flex items-center gap-3">
-            <div className="h-8 w-8 rounded-full bg-slate-800" aria-hidden="true" />
-            <div className="flex-1 overflow-hidden">
-              <p className="truncate text-sm font-medium">Institutional Admin</p>
-              <p className="truncate text-xs text-slate-400">
-                {loadingState === 'ready'
-                  ? 'Backend config synced'
-                  : loadingState === 'error'
-                    ? 'Using fallback config'
-                    : 'Loading config'}
-              </p>
-            </div>
-          </div>
-        </div>
-      </aside>
+      </WalletModal>
 
       <main className="flex min-w-0 flex-1 flex-col">
         <header className="sticky top-0 z-30 flex min-h-16 items-center justify-between gap-3 border-b border-slate-800 bg-background/80 px-3 py-3 backdrop-blur-md sm:px-6 lg:px-8">
@@ -381,17 +350,22 @@ const App = () => {
             />
             <div className="flex min-w-0 items-center gap-2">
               {wallet ? (
-                <CopyablePublicKey publicKey={wallet.publicKey} label={`${wallet.network} public key`} />
+                <div className="flex items-center gap-2">
+                  <CopyablePublicKey publicKey={wallet.publicKey} label={`${wallet.network} public key`} />
+                  <span className="hidden rounded-full border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-300 md:inline">
+                    0.00 XLM
+                  </span>
+                </div>
               ) : (
                 <button
                   type="button"
-                  onClick={handleConnectWallet}
+                  onClick={() => setWalletModalOpen(true)}
                   disabled={walletStatus === 'connecting'}
                   className="flex min-w-0 items-center gap-2 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 transition-all hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 sm:px-4"
                 >
                   <Wallet size={18} aria-hidden="true" />
                   <span className="hidden text-sm font-medium sm:inline">
-                    {walletStatus === 'connecting' ? 'Connecting...' : 'Connect Wallet'}
+                    {walletStatus === 'connecting' ? t('wallet.connecting') : t('wallet.connect')}
                   </span>
                 </button>
               )}
@@ -401,6 +375,16 @@ const App = () => {
                 </span>
               ) : null}
             </div>
+            <select
+              aria-label={t('language.label')}
+              value={language}
+              onChange={(event) => changeLanguage(event.target.value as 'en' | 'es' | 'pt')}
+              className="rounded-lg border border-slate-700 bg-slate-900 px-2 py-2 text-sm text-slate-200"
+            >
+              <option value="en">{t('language.en')}</option>
+              <option value="es">{t('language.es')}</option>
+              <option value="pt">{t('language.pt')}</option>
+            </select>
             <UserAvatarDropdown
               onSettings={() => setActiveTab('settings')}
               onNotifications={() => setActiveTab('notifications')}
@@ -456,7 +440,9 @@ const App = () => {
               transition={{ duration: 0.2 }}
             >
               <Suspense fallback={<TabFallback />}>
-                {activeTab === 'dashboard' && <DashboardOverview uiConfig={uiConfig} />}
+                {activeTab === 'dashboard' && (
+                  <DashboardOverview uiConfig={uiConfig} isLoading={loadingState === 'loading'} />
+                )}
                 {activeTab === 'deposit' && <SEP24Flow type="deposit" uiConfig={uiConfig} />}
                 {activeTab === 'withdraw' && <SEP24Flow type="withdraw" uiConfig={uiConfig} />}
                 {activeTab === 'history' && <TransactionHistory />}
