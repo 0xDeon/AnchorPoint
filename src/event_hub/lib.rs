@@ -75,7 +75,11 @@ impl EventHub {
             .instance()
             .set(&DataKey::RegisteredContracts, &contracts);
 
-
+        anchorpointutils::storage::extend_instance_ttl(
+            &env,
+            anchorpointutils::storage::INSTANCE_THRESHOLD,
+            anchorpointutils::storage::INSTANCE_EXTEND_TO,
+        );
 
         env.events()
             .publish((symbol_short!("hub"), symbol_short!("init")), admin);
@@ -340,6 +344,12 @@ impl EventHub {
             .get(&DataKey::Admin)
             .expect("hub not initialized");
         assert_eq!(*admin, expected_admin, "unauthorized");
+
+        anchorpointutils::storage::extend_instance_ttl(
+            env,
+            anchorpointutils::storage::INSTANCE_THRESHOLD,
+            anchorpointutils::storage::INSTANCE_EXTEND_TO,
+        );
     }
 
     /// Require that a source is registered and authorizes the capture.
@@ -360,7 +370,7 @@ mod tests {
     use super::*;
     use soroban_sdk::{
         contract, contractimpl,
-        testutils::{Address as AddressUtils, Ledger},
+        testutils::{storage::Instance as _, Address as AddressUtils, Ledger},
     };
 
     #[contract]
@@ -399,6 +409,9 @@ mod tests {
         client.initialize(&admin);
 
         assert_eq!(client.get_event_count(), 0);
+
+        let initial_ttl = env.as_contract(&contract_id, || env.storage().instance().get_ttl());
+        assert!(initial_ttl >= anchorpointutils::storage::INSTANCE_EXTEND_TO);
     }
 
     #[test]
@@ -415,6 +428,9 @@ mod tests {
         client.register_contract(&admin, &source_contract);
 
         assert!(client.is_registered(&source_contract));
+
+        let register_ttl = env.as_contract(&contract_id, || env.storage().instance().get_ttl());
+        assert!(register_ttl >= anchorpointutils::storage::INSTANCE_EXTEND_TO);
     }
 
     #[test]
