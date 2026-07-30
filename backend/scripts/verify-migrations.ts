@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /**
  * Prisma Migration Verification Script
- * 
+ *
  * Verifies the integrity of Prisma migrations against a temporary database
  * to prevent breaking changes during production deployments.
- * 
+ *
  * This script:
  * 1. Creates a temporary database
  * 2. Applies all migrations to it
@@ -91,6 +91,45 @@ class MigrationVerifier {
   }
 
   /**
+   * Reset the database schema for PostgreSQL databases
+   * Drops and recreates the public schema to ensure a clean state
+   * Only runs when explicitly enabled via VERIFY_MIGRATIONS_ALLOW_RESET env var
+   */
+  private resetDatabaseSchema(): boolean {
+    try {
+      // Only run this in CI/ephemeral environments with explicit permission
+      if (process.env.VERIFY_MIGRATIONS_ALLOW_RESET !== 'true') {
+        return true; // Skip reset if not explicitly enabled
+      }
+
+      const databaseUrl = process.env.DATABASE_URL;
+      if (!databaseUrl) {
+        throw new Error('DATABASE_URL must be set to reset database schema');
+      }
+
+      // Only reset for PostgreSQL URLs (skip SQLite)
+      if (databaseUrl.startsWith('file:')) {
+        return true; // SQLite doesn't need schema reset
+      }
+
+      console.log('🔄 Resetting database schema for migration verification...');
+
+      this.runSilent(
+        `${this.prismaBinary} db execute --url "${databaseUrl}" --stdin`,
+        {
+          input: 'DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;',
+        }
+      );
+
+      console.log('✅ Database schema reset successfully');
+      return true;
+    } catch (error) {
+      console.error('❌ Failed to reset database schema:', error);
+      return false;
+    }
+  }
+
+  /**
    * Create temporary database
    */
   private createTempDatabase(): boolean {
@@ -114,11 +153,16 @@ class MigrationVerifier {
   private applyMigrations(): boolean {
     try {
       console.log('🔄 Applying migrations to temporary database...');
-      
+
       const env = {
         ...process.env,
         DATABASE_URL: process.env.DATABASE_URL || `file:${this.tempDbPath}`,
       };
+
+      // Reset schema before applying migrations to ensure clean state
+      if (!this.resetDatabaseSchema()) {
+        throw new Error('Failed to reset database schema');
+      }
 
       // Apply committed migrations to the temporary database.
       this.runSilent(`${this.prismaBinary} migrate deploy`, {
@@ -273,7 +317,7 @@ class MigrationVerifier {
 
       for (const migrationDir of migrationDirs) {
         const migrationSqlPath = path.join(this.migrationsPath, migrationDir, 'migration.sql');
-        
+
         if (!fs.existsSync(migrationSqlPath)) {
           console.error(`❌ Migration ${migrationDir} missing migration.sql`);
           return false;
@@ -408,7 +452,7 @@ if (require.main === module) {
   const verifier = new MigrationVerifier();
   const result = verifier.verify();
   verifier.printResults(result);
-  
+
   process.exit(result.success ? 0 : 1);
 }
 

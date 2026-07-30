@@ -90,6 +90,7 @@ jobs:
         env:
           DATABASE_URL: "postgresql://prisma:prisma_password@localhost:5432/cidb"
           SHADOW_DATABASE_URL: "postgresql://prisma:prisma_password@localhost:5433/shadowdb"
+          VERIFY_MIGRATIONS_ALLOW_RESET: "true"
         run: npm run migrate:verify
 
       - name: Run Migration Integrity Checker
