@@ -16,6 +16,7 @@
 import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as crypto from 'crypto';
 
 interface MigrationCheckResult {
   success: boolean;
@@ -36,6 +37,8 @@ class MigrationVerifier {
   private prismaBinary: string;
   private schemaPath: string;
   private migrationsPath: string;
+  private ephemeralPostgresDbName?: string;
+  private ephemeralAdminUrl?: string;
 
   constructor() {
     const tempDbName = `prisma-verify-${Date.now()}.db`;
@@ -84,9 +87,14 @@ class MigrationVerifier {
    * Clean up temporary database
    */
   private cleanup(): void {
-    if (fs.existsSync(this.tempDbPath)) {
-      fs.unlinkSync(this.tempDbPath);
-      console.log('🧹 Cleaned up temporary database');
+    try {
+      if (fs.existsSync(this.tempDbPath)) {
+        fs.unlinkSync(this.tempDbPath);
+        console.log('🧹 Cleaned up temporary database');
+      }
+    } finally {
+      // Always drop ephemeral Postgres DB if it was created
+      this.dropEphemeralPostgresDatabase();
     }
   }
 
@@ -159,6 +167,91 @@ class MigrationVerifier {
   }
 
   /**
+   * Build a PostgreSQL URL with a different database name
+   */
+  private buildDbUrlWithDb(originalUrl: string, newDbName: string): string {
+    const url = new URL(originalUrl);
+    url.pathname = `/${newDbName}`;
+    return url.toString();
+  }
+
+  /**
+   * Create an ephemeral PostgreSQL database for migration verification
+   * This ensures each verification run has a clean, isolated database
+   */
+  private createEphemeralPostgresDatabase(originalUrl: string): string {
+    if (!originalUrl || originalUrl.startsWith('file:')) {
+      return originalUrl; // SQLite doesn't need ephemeral creation
+    }
+
+    // Build admin URL pointing to 'postgres' database to create new DB
+    const adminUrl = this.buildDbUrlWithDb(originalUrl, 'postgres');
+    this.ephemeralAdminUrl = adminUrl;
+
+    // Generate unique ephemeral DB name
+    const ephemName = `prisma_verify_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
+    this.ephemeralPostgresDbName = ephemName;
+
+    console.log(`🔧 Creating ephemeral verification database: ${ephemName}`);
+
+    try {
+      this.runSilent(`${this.prismaBinary} db execute --url "${adminUrl}" --stdin`, {
+        input: `CREATE DATABASE "${ephemName}";`,
+      });
+    } catch (err) {
+      console.error('❌ Failed to create ephemeral database:', err);
+      throw err;
+    }
+
+    // Build and return URL pointing to new ephemeral DB
+    const newUrl = this.buildDbUrlWithDb(originalUrl, ephemName);
+
+    // Wait for the new DB to be ready before returning
+    this.waitForDbReady(newUrl);
+
+    return newUrl;
+  }
+
+  /**
+   * Drop ephemeral PostgreSQL database during cleanup
+   */
+  private dropEphemeralPostgresDatabase(): void {
+    try {
+      if (this.ephemeralPostgresDbName && this.ephemeralAdminUrl) {
+        console.log(`🧹 Dropping ephemeral database: ${this.ephemeralPostgresDbName}`);
+        this.runSilent(`${this.prismaBinary} db execute --url "${this.ephemeralAdminUrl}" --stdin`, {
+          input: `DROP DATABASE IF EXISTS "${this.ephemeralPostgresDbName}";`,
+        });
+      }
+    } catch (err) {
+      console.warn('⚠️  Failed to drop ephemeral database:', err);
+    }
+  }
+
+  /**
+   * Wait for database to be ready by polling with SELECT 1
+   */
+  private waitForDbReady(dbUrl: string, attempts = 15, delayMs = 500): void {
+    for (let i = 0; i < attempts; i++) {
+      try {
+        this.runSilent(`${this.prismaBinary} db execute --url "${dbUrl}" --stdin`, {
+          input: 'SELECT 1;',
+        });
+        console.log(`✅ Database is ready`);
+        return;
+      } catch (err) {
+        if (i < attempts - 1) {
+          const ms = delayMs * (i + 1);
+          console.log(`⏳ Waiting for DB readiness (${i + 1}/${attempts}) - retrying in ${ms}ms`);
+          // Use setTimeout to avoid blocking
+          execSync(`sleep ${(ms / 1000).toFixed(3)}`);
+        }
+      }
+    }
+    throw new Error(`Timed out waiting for database to become ready after ${attempts} attempts`);
+  }
+
+  /**
    * Create temporary database
    */
   private createTempDatabase(): boolean {
@@ -183,16 +276,24 @@ class MigrationVerifier {
     try {
       console.log('🔄 Applying migrations to temporary database...');
 
-      const env = {
+      let env = {
         ...process.env,
         DATABASE_URL: process.env.DATABASE_URL || `file:${this.tempDbPath}`,
       };
+
+      // If DATABASE_URL is Postgres, create a unique ephemeral DB to avoid collisions
+      if (!env.DATABASE_URL!.startsWith('file:')) {
+        env.DATABASE_URL = this.createEphemeralPostgresDatabase(env.DATABASE_URL!);
+      }
 
       // Reset schema before applying migrations to ensure clean state
       // Pass the explicit DATABASE_URL so reset and migrate operate on the same DB
       if (!this.resetDatabaseSchema(env.DATABASE_URL)) {
         throw new Error('Failed to reset database schema');
       }
+
+      // Ensure DB is ready before applying migrations
+      this.waitForDbReady(env.DATABASE_URL);
 
       // Apply committed migrations to the temporary database.
       this.runSilent(`${this.prismaBinary} migrate deploy`, {
