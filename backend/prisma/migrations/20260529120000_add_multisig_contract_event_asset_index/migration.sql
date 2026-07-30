@@ -3,13 +3,13 @@ CREATE TABLE "ContractEvent" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "contractId" TEXT NOT NULL,
     "ledger" INTEGER NOT NULL,
-    "ledgerClosedAt" DATETIME NOT NULL,
+    "ledgerClosedAt" TIMESTAMP WITH TIME ZONE NOT NULL,
     "txHash" TEXT NOT NULL,
     "contractEventId" TEXT NOT NULL,
     "topics" TEXT NOT NULL,
     "value" TEXT NOT NULL,
     "type" TEXT NOT NULL,
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    "createdAt" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 -- CreateTable
@@ -23,12 +23,12 @@ CREATE TABLE "MultisigTransaction" (
     "currentSignatures" INTEGER NOT NULL DEFAULT 0,
     "status" TEXT NOT NULL DEFAULT 'PENDING',
     "memo" TEXT,
-    "expiresAt" DATETIME,
-    "submittedAt" DATETIME,
+    "expiresAt" TIMESTAMP WITH TIME ZONE,
+    "submittedAt" TIMESTAMP WITH TIME ZONE,
     "stellarTxId" TEXT,
     "metadata" JSONB,
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" DATETIME NOT NULL
+    "createdAt" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 -- CreateTable
@@ -37,7 +37,7 @@ CREATE TABLE "MultisigSignature" (
     "multisigTransactionId" TEXT NOT NULL,
     "signerPublicKey" TEXT NOT NULL,
     "signature" TEXT NOT NULL,
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "createdAt" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "MultisigSignature_multisigTransactionId_fkey" FOREIGN KEY ("multisigTransactionId") REFERENCES "MultisigTransaction" ("id") ON DELETE CASCADE ON UPDATE CASCADE
 );
 
@@ -48,9 +48,9 @@ CREATE TABLE "MultisigNotification" (
     "recipientPublicKey" TEXT NOT NULL,
     "type" TEXT NOT NULL,
     "message" TEXT NOT NULL,
-    "readAt" DATETIME,
-    "sentAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "readAt" TIMESTAMP WITH TIME ZONE,
+    "sentAt" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "createdAt" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "MultisigNotification_multisigTransactionId_fkey" FOREIGN KEY ("multisigTransactionId") REFERENCES "MultisigTransaction" ("id") ON DELETE CASCADE ON UPDATE CASCADE
 );
 
@@ -62,7 +62,7 @@ CREATE TABLE "AssetValidationResult" (
     "complianceStatus" TEXT NOT NULL,
     "messages" TEXT NOT NULL,
     "rawToml" TEXT,
-    "lastCrawledAt" DATETIME NOT NULL,
+    "lastCrawledAt" TIMESTAMP WITH TIME ZONE NOT NULL,
 
     PRIMARY KEY ("assetCode", "issuerPublicKey")
 );
@@ -70,8 +70,8 @@ CREATE TABLE "AssetValidationResult" (
 -- CreateTable
 CREATE TABLE "CrawlJobRecord" (
     "id" TEXT NOT NULL PRIMARY KEY,
-    "startedAt" DATETIME NOT NULL,
-    "completedAt" DATETIME,
+    "startedAt" TIMESTAMP WITH TIME ZONE NOT NULL,
+    "completedAt" TIMESTAMP WITH TIME ZONE,
     "totalAssets" INTEGER NOT NULL,
     "compliantCount" INTEGER NOT NULL,
     "nonCompliantCount" INTEGER NOT NULL,
