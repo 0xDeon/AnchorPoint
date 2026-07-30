@@ -28,7 +28,7 @@ import eventRouter from './api/routes/event.route';
 import notificationsRouter from './api/routes/notifications.route';
 import { publicLimiter, authLimiter } from './api/middleware/rate-limit.middleware';
 import { notificationService } from './services/notification.service';
-import { createEmailProvider, ConsoleSmsProvider, ConsolePushProvider } from './lib/notifications/providers';
+import { createEmailProvider, ConsoleSmsProvider, FcmPushProvider } from './lib/notifications/providers';
 import { NotificationType } from './services/notification.service';
 import { validateKmsConfigOnStartup } from './lib/key-management.service';
 import queueDashboardRouter from './api/routes/queue-dashboard.route';
@@ -37,10 +37,54 @@ import { redis } from './lib/redis';
 import { validateStorageConfigOnStartup } from './services/storage-provider.service';
 import { uploadExpiryScheduler } from './workers/upload-expiry.scheduler';
 
+let server: ReturnType<typeof app.listen> | null = null;
+
+function gracefulShutdown(signal: string): void {
+  logger.info(`${signal} received, initiating graceful shutdown`);
+
+  if (feeReportScheduler) {
+    feeReportScheduler.stop();
+  }
+
+  if (uploadExpiryScheduler) {
+    uploadExpiryScheduler.stop();
+  }
+
+  if (server) {
+    server.close(() => {
+      logger.info('HTTP server closed');
+    });
+  }
+
+  prisma.$disconnect()
+    .then(() => {
+      logger.info('Prisma client disconnected');
+    })
+    .catch((err) => {
+      logger.error('Error disconnecting Prisma client:', err);
+    });
+
+  redis.quit()
+    .then(() => {
+      logger.info('Redis connection closed');
+    })
+    .catch((err) => {
+      logger.error('Error closing Redis connection:', err);
+    });
+
+  setTimeout(() => {
+    logger.error('Graceful shutdown timed out, forcing exit');
+    process.exit(1);
+  }, 30000);
+}
+
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+
 // Initialize Notification Engine
 notificationService.registerProvider(NotificationType.EMAIL, createEmailProvider());
 notificationService.registerProvider(NotificationType.SMS, new ConsoleSmsProvider());
-notificationService.registerProvider(NotificationType.PUSH, new ConsolePushProvider());
+notificationService.registerProvider(NotificationType.PUSH, new FcmPushProvider());
 
 const app = express();
 app.disable('x-powered-by');
@@ -279,7 +323,7 @@ if (process.env.NODE_ENV !== 'test') {
       logger.error('Failed to initialize config service:', error);
     })
     .finally(() => {
-      app.listen(PORT, () => {
+      server = app.listen(PORT, () => {
         logger.info(`Backend service listening at http://localhost:${PORT}`);
         logger.info(`API Documentation available at http://localhost:${PORT}/api-docs`);
         feeReportScheduler.start();
