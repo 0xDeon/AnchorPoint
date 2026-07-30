@@ -216,6 +216,7 @@ enum KYCStatus {
   PENDING
   ACCEPTED
   REJECTED
+  KYC_EXPIRING_SOON
 }
 
 model KycCustomer {
@@ -228,6 +229,7 @@ model KycCustomer {
   lastName    String?
   email       String?
   status      KYCStatus @default(PENDING)
+  expiresAt   DateTime?
   extraFields Json?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt

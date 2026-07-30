@@ -131,3 +131,8 @@ export class NotificationService {
 }
 
 export const notificationService = NotificationService.getInstance();
+
+export async function sendKycExpirationWarning(userId: string, renewalUrl: string): Promise<void> {
+  const message = `Your KYC verification expires soon. Please renew here: ${renewalUrl}`;
+  await notificationService.notify(userId, message);
+}
