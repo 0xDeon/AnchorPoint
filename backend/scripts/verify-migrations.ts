@@ -94,28 +94,57 @@ class MigrationVerifier {
    * Reset the database schema for PostgreSQL databases
    * Drops and recreates the public schema to ensure a clean state
    * Only runs when explicitly enabled via VERIFY_MIGRATIONS_ALLOW_RESET env var
+   *
+   * @param databaseUrl - Explicit database URL to reset (ensures consistency with migrate deploy)
    */
-  private resetDatabaseSchema(): boolean {
+  private resetDatabaseSchema(databaseUrl?: string): boolean {
     try {
       // Only run this in CI/ephemeral environments with explicit permission
       if (process.env.VERIFY_MIGRATIONS_ALLOW_RESET !== 'true') {
         return true; // Skip reset if not explicitly enabled
       }
 
-      const databaseUrl = process.env.DATABASE_URL;
-      if (!databaseUrl) {
-        throw new Error('DATABASE_URL must be set to reset database schema');
+      const dbUrl = databaseUrl || process.env.DATABASE_URL;
+      if (!dbUrl) {
+        throw new Error('DATABASE_URL must be provided to reset database schema');
       }
 
-      // Only reset for PostgreSQL URLs (skip SQLite)
-      if (databaseUrl.startsWith('file:')) {
+      // If SQLite, no need to drop schema (file-based)
+      if (dbUrl.startsWith('file:')) {
         return true; // SQLite doesn't need schema reset
+      }
+
+      // Safety check: do not drop non-local or production-looking databases
+      try {
+        // Parse PostgreSQL connection string safely
+        const dbUrlObj = new URL(dbUrl.replace(/^postgresql:\/\//, 'http://'));
+        const hostname = dbUrlObj.hostname || '';
+        const pathname = dbUrlObj.pathname || '';
+        const dbName = pathname.replace(/^\//, '').split('?')[0]; // Extract DB name before query params
+
+        // Allow only local/ci ephemeral hosts or names containing 'test' or 'prisma-verify'
+        const isLocalHost = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === 'postgres';
+        const isCiEnvironment = process.env.CI === 'true';
+        const isEphemeralName = /test|ci|prisma-verify/i.test(dbName);
+
+        if (!isLocalHost && !isCiEnvironment && !isEphemeralName) {
+          throw new Error(
+            `Refusing to reset schema for host '${hostname}' and db '${dbName}'. ` +
+            'Schema reset only allowed for ephemeral databases (local, CI, or containing test/ci/prisma-verify in name). ' +
+            'Set VERIFY_MIGRATIONS_ALLOW_RESET only for ephemeral DBs.'
+          );
+        }
+
+        console.log(`ℹ️  Reset allowed for ephemeral DB: host=${hostname}, name=${dbName}`);
+      } catch (parseErr) {
+        // If parsing fails, refuse to run reset to be safe
+        throw new Error(`Unable to safely parse database URL for reset safety check: ${parseErr}`);
       }
 
       console.log('🔄 Resetting database schema for migration verification...');
 
       this.runSilent(
-        `${this.prismaBinary} db execute --url "${databaseUrl}" --stdin`,
+        `${this.prismaBinary} db execute --url "${dbUrl}" --stdin`,
         {
           input: 'DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;',
         }
@@ -160,7 +189,8 @@ class MigrationVerifier {
       };
 
       // Reset schema before applying migrations to ensure clean state
-      if (!this.resetDatabaseSchema()) {
+      // Pass the explicit DATABASE_URL so reset and migrate operate on the same DB
+      if (!this.resetDatabaseSchema(env.DATABASE_URL)) {
         throw new Error('Failed to reset database schema');
       }
 
