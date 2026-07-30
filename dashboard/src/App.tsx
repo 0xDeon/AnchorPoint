@@ -21,6 +21,8 @@ import { NotificationBell } from './components/NotificationBell';
 import { UserAvatarDropdown } from './components/UserAvatarDropdown';
 import { CopyablePublicKey } from './components/CopyablePublicKey';
 import { WalletModal } from './components/WalletModal';
+import { NetworkSelector } from './components/NetworkSelector';
+import { SessionTimeoutModal } from './components/Auth/SessionTimeoutModal';
 import { FreighterAdapter } from './lib/wallet/FreighterAdapter';
 import { I18nProvider, useTranslation } from './i18n/config';
 
@@ -310,6 +312,8 @@ const App = () => {
         </div>
       </WalletModal>
 
+      <SessionTimeoutModal />
+
       <main className="flex min-w-0 flex-1 flex-col">
         <header className="sticky top-0 z-30 flex min-h-16 items-center justify-between gap-3 border-b border-slate-800 bg-background/80 px-3 py-3 backdrop-blur-md sm:px-6 lg:px-8">
           <button
@@ -375,23 +379,24 @@ const App = () => {
                 </span>
               ) : null}
             </div>
-            <select
-              aria-label={t('language.label')}
-              value={language}
-              onChange={(event) => changeLanguage(event.target.value as 'en' | 'es' | 'pt')}
-              className="rounded-lg border border-slate-700 bg-slate-900 px-2 py-2 text-sm text-slate-200"
-            >
-              <option value="en">{t('language.en')}</option>
-              <option value="es">{t('language.es')}</option>
-              <option value="pt">{t('language.pt')}</option>
-            </select>
-            <UserAvatarDropdown
-              onSettings={() => setActiveTab('settings')}
-              onNotifications={() => setActiveTab('notifications')}
-              onSignOut={() => {
-                void handleWalletDisconnect();
-              }}
-            />
+              <select
+                aria-label={t('language.label')}
+                value={language}
+                onChange={(event) => changeLanguage(event.target.value as 'en' | 'es' | 'pt')}
+                className="rounded-lg border border-slate-700 bg-slate-900 px-2 py-2 text-sm text-slate-200"
+              >
+                <option value="en">{t('language.en')}</option>
+                <option value="es">{t('language.es')}</option>
+                <option value="pt">{t('language.pt')}</option>
+              </select>
+              <NetworkSelector apiBaseUrl={apiBaseUrl} />
+              <UserAvatarDropdown
+                onSettings={() => setActiveTab('settings')}
+                onNotifications={() => setActiveTab('notifications')}
+                onSignOut={() => {
+                  void handleWalletDisconnect();
+                }}
+              />
           </div>
         </header>
 
@@ -473,6 +478,7 @@ const App = () => {
         </section>
       </main>
     </div>
+    </I18nProvider>
   );
 };
 

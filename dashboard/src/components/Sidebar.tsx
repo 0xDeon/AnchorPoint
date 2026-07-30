@@ -1,5 +1,4 @@
 import { AnimatePresence, motion } from 'framer-motion';
-import { X } from 'lucide-react';
 import type { ComponentType } from 'react';
 import type { UiConfig } from '../types';
 import { LogoMark } from './LogoMark';
