@@ -231,6 +231,22 @@ const dashboardUiSchema = z.object({
   }),
 });
 
+const sep31AssetConfigSchema = z.object({
+  enabled: z.boolean(),
+  min_amount: z.number().positive(),
+  max_amount: z.number().positive(),
+  fee_fixed: z.number().min(0),
+  fee_percent: z.number().min(0),
+  quotes_supported: z.boolean().default(false),
+  quotes_required: z.boolean().default(false),
+  sender_sep12_type: z.string().default('sep31-sender'),
+  receiver_sep12_type: z.string().default('sep31-receiver'),
+});
+
+const sep31ConfigSchema = z.object({
+  assets: z.record(z.string(), sep31AssetConfigSchema),
+});
+
 export const dynamicConfigSchema = z.object({
   JWT_SECRET: z.string().min(8, 'JWT_SECRET must be at least 8 characters'),
   INTERACTIVE_URL: z.string().url(),
@@ -243,6 +259,32 @@ export const dynamicConfigSchema = z.object({
   STELLAR_HORIZON_URL: z.string().url(),
   STELLAR_FEE_BUMP_SECRET: z.string().optional(),
   STELLAR_BASE_FEE: z.string(),
+  sep31: sep31ConfigSchema.default({
+    assets: {
+      USDC: {
+        enabled: true,
+        min_amount: 1,
+        max_amount: 1_000_000,
+        fee_fixed: 0,
+        fee_percent: 0.5,
+        quotes_supported: false,
+        quotes_required: false,
+        sender_sep12_type: 'sep31-sender',
+        receiver_sep12_type: 'sep31-receiver',
+      },
+      EURC: {
+        enabled: true,
+        min_amount: 1,
+        max_amount: 1_000_000,
+        fee_fixed: 0,
+        fee_percent: 0.5,
+        quotes_supported: false,
+        quotes_required: false,
+        sender_sep12_type: 'sep31-sender',
+        receiver_sep12_type: 'sep31-receiver',
+      },
+    },
+  }),
   ui: dashboardUiSchema.default({
     brandName: 'AnchorPoint',
     primaryColor: '#3b82f6',
