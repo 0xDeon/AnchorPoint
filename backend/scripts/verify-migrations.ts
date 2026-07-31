@@ -38,6 +38,9 @@ class MigrationVerifier {
   private migrationsPath: string;
 
   constructor() {
+    if (!process.env.DATABASE_URL) {
+      process.env.DATABASE_URL = 'postgresql://prisma:prisma_password@localhost:5432/cidb';
+    }
     this.tempDbPath = path.join(os.tmpdir(), `prisma-verify-${Date.now()}.db`);
     this.prismaBinary = 'npx prisma';
     this.schemaPath = path.join(__dirname, '../prisma/schema.prisma');
