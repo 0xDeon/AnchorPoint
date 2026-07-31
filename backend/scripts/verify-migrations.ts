@@ -14,8 +14,9 @@
  */
 
 import { execSync } from 'child_process';
-import * as fs from 'fs';
-import * as path from 'path';
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
 
 interface MigrationCheckResult {
   success: boolean;

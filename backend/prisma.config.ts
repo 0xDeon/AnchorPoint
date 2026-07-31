@@ -6,6 +6,10 @@ export default defineConfig({
   migrations: {
     path: "prisma/migrations",
   },
+  datasource: {
+    provider: "postgresql",
+    url: process.env["DATABASE_URL"] || "postgresql://prisma:prisma_password@localhost:5432/cidb",
+  },
   seed: {
     script: "ts-node prisma/seed.ts",
   },
