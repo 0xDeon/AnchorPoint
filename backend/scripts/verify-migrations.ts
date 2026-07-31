@@ -111,7 +111,7 @@ class MigrationVerifier {
       
       const env = {
         ...process.env,
-        DATABASE_URL: process.env.DATABASE_URL || `file:${this.tempDbPath}`,
+        DATABASE_URL: process.env.DATABASE_URL || 'postgresql://prisma:prisma_password@localhost:5432/cidb',
       };
 
       // Reset and apply migrations
@@ -137,7 +137,7 @@ class MigrationVerifier {
 
       const env = {
         ...process.env,
-        DATABASE_URL: process.env.DATABASE_URL || `file:${this.tempDbPath}`,
+        DATABASE_URL: process.env.DATABASE_URL || 'postgresql://prisma:prisma_password@localhost:5432/cidb',
       };
 
       // Check if the database schema matches the Prisma schema
@@ -173,12 +173,12 @@ class MigrationVerifier {
 
       const env = {
         ...process.env,
-        DATABASE_URL: process.env.DATABASE_URL || `file:${this.tempDbPath}`,
+        DATABASE_URL: process.env.DATABASE_URL || 'postgresql://prisma:prisma_password@localhost:5432/cidb',
       };
 
       // Use Prisma migrate diff to detect destructive changes
       try {
-        const shadowUrl = process.env.SHADOW_DATABASE_URL || `file:${this.tempDbPath}.shadow`;
+        const shadowUrl = process.env.SHADOW_DATABASE_URL || 'postgresql://prisma:prisma_password@localhost:5433/shadowdb';
         this.runSilent(
           `${this.prismaBinary} migrate diff --from-migrations prisma/migrations --to-schema-datamodel prisma/schema.prisma --shadow-database-url "${shadowUrl}" --exit-code`,
           {
@@ -215,7 +215,7 @@ class MigrationVerifier {
 
       const env = {
         ...process.env,
-        DATABASE_URL: process.env.DATABASE_URL || `file:${this.tempDbPath}`,
+        DATABASE_URL: process.env.DATABASE_URL || 'postgresql://prisma:prisma_password@localhost:5432/cidb',
       };
 
       // Get the list of migrations
