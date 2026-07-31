@@ -9,8 +9,24 @@ import {
 } from '../../services/kyc.service';
 import prisma from '../../lib/prisma';
 import { isValidStellarPublicKey } from '../../utils/stellar-address';
+import { sep24MetricsMiddleware } from '../middleware/sep24-metrics.middleware';
+import { Sep24Service } from '../../services/sep24.service';
 
 const router = Router();
+
+router.use(sep24MetricsMiddleware);
+
+const ALLOWED_CALLBACK_PROTOCOLS = ['https:'];
+
+function isValidCallbackUrl(callback: unknown): boolean {
+  if (typeof callback !== 'string') return false;
+  try {
+    const url = new URL(callback);
+    return ALLOWED_CALLBACK_PROTOCOLS.includes(url.protocol);
+  } catch {
+    return false;
+  }
+}
 
 interface InteractiveRequest {
   asset_code: string;
@@ -18,6 +34,9 @@ interface InteractiveRequest {
   amount?: string;
   lang?: string;
   quote_id?: string;
+  redirect_url?: string;
+  on_change_callback?: string;
+  callback?: string;
 }
 
 interface InteractiveResponse {
@@ -90,7 +109,19 @@ const hasInvalidAccount = (account: unknown): boolean =>
  *         description: Invalid request parameters
  */
 router.post('/transactions/deposit/interactive', async (req: Request, res: Response) => {
-  const { asset_code, account, amount, lang = 'en', quote_id }: InteractiveRequest = req.body;
+  const { asset_code, account, amount, lang = 'en', quote_id, redirect_url, on_change_callback, callback }: InteractiveRequest = req.body;
+
+  const allowedDomains = process.env.SEP24_ALLOWED_CALLBACK_DOMAINS
+    ? process.env.SEP24_ALLOWED_CALLBACK_DOMAINS.split(',').filter(Boolean)
+    : [];
+
+  if (redirect_url && allowedDomains.length > 0 && !Sep24Service.validateCallbackUrl(redirect_url, allowedDomains)) {
+    return res.status(400).json({ error: 'invalid redirect_url domain' });
+  }
+
+  if (on_change_callback && allowedDomains.length > 0 && !Sep24Service.validateCallbackUrl(on_change_callback, allowedDomains)) {
+    return res.status(400).json({ error: 'invalid on_change_callback domain' });
+  }
 
   if (!asset_code) {
     return res.status(400).json({
@@ -105,6 +136,10 @@ router.post('/transactions/deposit/interactive', async (req: Request, res: Respo
 
   if (hasInvalidAccount(account)) {
     return res.status(400).json(invalidAccountResponse());
+  }
+
+  if (callback !== undefined && !isValidCallbackUrl(callback)) {
+    return res.status(400).json({ error: 'callback must be a valid HTTPS URL' });
   }
 
   if (quote_id) {
@@ -185,7 +220,19 @@ router.post('/transactions/deposit/interactive', async (req: Request, res: Respo
  *         description: Invalid request parameters
  */
 router.post('/transactions/withdraw/interactive', async (req: Request, res: Response) => {
-  const { asset_code, account, amount, lang = 'en', quote_id }: InteractiveRequest = req.body;
+  const { asset_code, account, amount, lang = 'en', quote_id, redirect_url, on_change_callback, callback }: InteractiveRequest = req.body;
+
+  const allowedDomains = process.env.SEP24_ALLOWED_CALLBACK_DOMAINS
+    ? process.env.SEP24_ALLOWED_CALLBACK_DOMAINS.split(',').filter(Boolean)
+    : [];
+
+  if (redirect_url && allowedDomains.length > 0 && !Sep24Service.validateCallbackUrl(redirect_url, allowedDomains)) {
+    return res.status(400).json({ error: 'invalid redirect_url domain' });
+  }
+
+  if (on_change_callback && allowedDomains.length > 0 && !Sep24Service.validateCallbackUrl(on_change_callback, allowedDomains)) {
+    return res.status(400).json({ error: 'invalid on_change_callback domain' });
+  }
 
   if (!asset_code) {
     return res.status(400).json({
@@ -200,6 +247,10 @@ router.post('/transactions/withdraw/interactive', async (req: Request, res: Resp
 
   if (hasInvalidAccount(account)) {
     return res.status(400).json(invalidAccountResponse());
+  }
+
+  if (callback !== undefined && !isValidCallbackUrl(callback)) {
+    return res.status(400).json({ error: 'callback must be a valid HTTPS URL' });
   }
 
   if (quote_id) {
@@ -229,4 +280,83 @@ router.post('/transactions/withdraw/interactive', async (req: Request, res: Resp
   return res.json(response);
 });
 
+/**
+ * @swagger
+ * /sep24/transaction:
+ *   get:
+ *     summary: SEP-24 Transaction Status
+ *     description: SEP-24 Transaction Status Endpoint. Returns details of a specific transaction by id, stellar_transaction_id, or external_transaction_id.
+ *     tags: [SEP-24]
+ *     parameters:
+ *       - in: query
+ *         name: id
+ *         schema:
+ *           type: string
+ *         description: Anchor transaction ID
+ *       - in: query
+ *         name: stellar_transaction_id
+ *         schema:
+ *           type: string
+ *         description: Stellar transaction hash
+ *       - in: query
+ *         name: external_transaction_id
+ *         schema:
+ *           type: string
+ *         description: External transaction ID
+ *     responses:
+ *       200:
+ *         description: Transaction details
+ *       400:
+ *         description: Missing query parameter or missing stellar transaction hash
+ *       404:
+ *         description: Transaction not found
+ */
+router.get('/transaction', async (req: Request, res: Response) => {
+  const { id, stellar_transaction_id, external_transaction_id } = req.query as Record<string, string>;
+
+  if (!id && !stellar_transaction_id && !external_transaction_id) {
+    return res.status(400).json({ error: 'One of id, stellar_transaction_id, or external_transaction_id is required' });
+  }
+
+  try {
+    const transaction = await prisma.transaction.findFirst({
+      where: {
+        ...(id && { id }),
+        ...(stellar_transaction_id && { stellarTxId: stellar_transaction_id }),
+        ...(external_transaction_id && { externalId: external_transaction_id }),
+      },
+    });
+
+    if (!transaction) {
+      return res.status(404).json({ error: 'Transaction not found' });
+    }
+
+    // Strict null check guard for stellar transaction hash
+    const stellarTxHash = transaction.stellarTxId ?? stellar_transaction_id ?? null;
+    if (!stellarTxHash) {
+      return res.status(400).json({ error: 'Stellar transaction hash is missing or invalid' });
+    }
+
+    const validHash: string = stellarTxHash;
+
+    return res.json({
+      transaction: {
+        id: transaction.id,
+        kind: transaction.type.toLowerCase(),
+        status: transaction.status.toLowerCase(),
+        amount_in: transaction.type === 'DEPOSIT' ? transaction.amount : undefined,
+        amount_out: transaction.type === 'WITHDRAW' ? transaction.amount : undefined,
+        asset_code: transaction.assetCode,
+        stellar_transaction_id: validHash,
+        external_transaction_id: transaction.externalId ?? undefined,
+        started_at: transaction.createdAt.toISOString(),
+        completed_at: transaction.status === 'COMPLETED' ? transaction.updatedAt.toISOString() : undefined,
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({ error: 'Failed to fetch transaction' });
+  }
+});
+
 export default router;
+

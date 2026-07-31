@@ -14,7 +14,6 @@ describe('uploadStore', () => {
     const record = uploadStore.create(
       'GD3...123',
       'id_front',
-      'kyc/GD3...123/id_front/1',
       'image/png',
       expiresAt
     );
@@ -32,7 +31,6 @@ describe('uploadStore', () => {
     const record = uploadStore.create(
       'GD3...123',
       'id_front',
-      'kyc/GD3...123/id_front/1',
       'image/png',
       expiresAt
     );
@@ -46,7 +44,6 @@ describe('uploadStore', () => {
     const record = uploadStore.create(
       'GD3...123',
       'id_front',
-      'kyc/GD3...123/id_front/1',
       'image/png',
       pastDate
     );

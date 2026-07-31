@@ -10,6 +10,13 @@ jest.mock('../lib/key-management.service', () => ({
   getKeyManagementService: jest.fn(),
 }));
 
+const mockCacheDel = jest.fn();
+jest.mock('../lib/redis', () => ({
+  redis: {
+    del: mockCacheDel,
+  },
+}));
+
 jest.mock('../config/env', () => ({
   config: {
     KEY_MANAGEMENT_BACKEND: 'aws-kms',
@@ -28,6 +35,7 @@ describe('KeyRotationService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockCacheDel.mockResolvedValue(1);
     service = new KeyRotationService();
   });
 
@@ -81,9 +89,10 @@ describe('KeyRotationService', () => {
 
     const result = await service.rotateKeys();
 
-    expect(initializeKeyManagement).toHaveBeenCalledTimes(1);
+    expect(initializeKeyManagement).toHaveBeenCalledTimes(2);
     expect(mockKeyService.isHealthy).toHaveBeenCalled();
     expect(mockKeyService.rotateEncryptionKey).toHaveBeenCalled();
+    expect(mockCacheDel).toHaveBeenCalledWith('hot_wallet_keys');
     expect(result).toEqual(rotationResult);
   });
 
@@ -109,6 +118,35 @@ describe('KeyRotationService', () => {
     await service.rotateKeys();
     await service.rotateKeys();
 
-    expect(initializeKeyManagement).toHaveBeenCalledTimes(1);
+    expect(initializeKeyManagement).toHaveBeenCalledTimes(3);
+  });
+
+  it('evicts old hot wallet public keys after successful rotation', async () => {
+    const cacheState = new Map<string, string>([['hot_wallet_keys', 'GOLD_PUBLIC_KEY']]);
+    mockCacheDel.mockImplementation(async (key: string) => {
+      const existed = cacheState.delete(key);
+      return existed ? 1 : 0;
+    });
+
+    buildKeyManagementConfigFromEnv.mockReturnValue({
+      backend: 'aws-kms',
+      keyArn: 'arn:aws:kms:us-east-1:123456789012:key/test',
+    });
+
+    getKeyManagementService.mockReturnValue({
+      isHealthy: jest.fn().mockResolvedValue(true),
+      rotateEncryptionKey: jest.fn().mockResolvedValue({
+        success: true,
+        backend: 'aws-kms',
+        rotated: true,
+        keyVersion: '2',
+        message: 'Automatic key rotation enabled',
+        timestamp: Date.now(),
+      }),
+    });
+
+    await service.rotateKeys();
+
+    expect(cacheState.has('hot_wallet_keys')).toBe(false);
   });
 });

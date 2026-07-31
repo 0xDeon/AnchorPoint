@@ -15,6 +15,9 @@ jest.mock('../../lib/prisma', () => ({
     quote: {
       findUnique: jest.fn(),
     },
+    transaction: {
+      findFirst: jest.fn(),
+    },
   },
 }));
 
@@ -36,6 +39,7 @@ describe('SEP-24 Routes', () => {
 
   afterEach(() => {
     delete process.env.INTERACTIVE_URL;
+    delete process.env.SEP24_ALLOWED_CALLBACK_DOMAINS;
   });
 
   describe('POST /transactions/deposit/interactive', () => {
@@ -110,6 +114,26 @@ describe('SEP-24 Routes', () => {
       const parsed = new URL(res.body.url);
       expect(parsed.searchParams.get('lang')).toBe('en');
     });
+
+    it('returns 400 when redirect_url is not in whitelist', async () => {
+      process.env.SEP24_ALLOWED_CALLBACK_DOMAINS = 'example.com';
+      const res = await request(app)
+        .post('/transactions/deposit/interactive')
+        .send({ asset_code: 'USDC', redirect_url: 'https://malicious.com/callback' });
+
+      expect(res.statusCode).toBe(400);
+      expect(res.body.error).toBe('invalid redirect_url domain');
+    });
+
+    it('returns 400 when on_change_callback is not in whitelist', async () => {
+      process.env.SEP24_ALLOWED_CALLBACK_DOMAINS = 'example.com';
+      const res = await request(app)
+        .post('/transactions/deposit/interactive')
+        .send({ asset_code: 'USDC', on_change_callback: 'https://malicious.com/hook' });
+
+      expect(res.statusCode).toBe(400);
+      expect(res.body.error).toBe('invalid on_change_callback domain');
+    });
   });
 
   describe('POST /transactions/withdraw/interactive', () => {
@@ -166,5 +190,84 @@ describe('SEP-24 Routes', () => {
       expect(res.body.error).toBe('account must be a valid Stellar public key');
       expect(res.body.error).not.toContain(account);
     });
+
+    it('returns 400 when redirect_url is not in whitelist', async () => {
+      process.env.SEP24_ALLOWED_CALLBACK_DOMAINS = 'example.com';
+      const res = await request(app)
+        .post('/transactions/withdraw/interactive')
+        .send({ asset_code: 'USDC', redirect_url: 'https://malicious.com/callback' });
+
+      expect(res.statusCode).toBe(400);
+      expect(res.body.error).toBe('invalid redirect_url domain');
+    });
+
+    it('returns 400 when on_change_callback is not in whitelist', async () => {
+      process.env.SEP24_ALLOWED_CALLBACK_DOMAINS = 'example.com';
+      const res = await request(app)
+        .post('/transactions/withdraw/interactive')
+        .send({ asset_code: 'USDC', on_change_callback: 'https://malicious.com/hook' });
+
+      expect(res.statusCode).toBe(400);
+      expect(res.body.error).toBe('invalid on_change_callback domain');
+    });
+  });
+
+  describe('GET /transaction', () => {
+    it('returns 400 when no query parameters are supplied', async () => {
+      const res = await request(app).get('/transaction');
+      expect(res.statusCode).toBe(400);
+      expect(res.body.error).toContain('One of id, stellar_transaction_id, or external_transaction_id is required');
+    });
+
+    it('returns 404 when transaction is not found', async () => {
+      const prisma = require('../../lib/prisma').default;
+      prisma.transaction.findFirst.mockResolvedValueOnce(null);
+
+      const res = await request(app).get('/transaction?id=nonexistent-id');
+      expect(res.statusCode).toBe(404);
+      expect(res.body.error).toBe('Transaction not found');
+    });
+
+    it('returns 400 when stellar transaction hash is missing', async () => {
+      const prisma = require('../../lib/prisma').default;
+      prisma.transaction.findFirst.mockResolvedValueOnce({
+        id: 'tx-123',
+        type: 'DEPOSIT',
+        status: 'PENDING',
+        amount: '10.00',
+        assetCode: 'USDC',
+        stellarTxId: null,
+        externalId: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+
+      const res = await request(app).get('/transaction?id=tx-123');
+      expect(res.statusCode).toBe(400);
+      expect(res.body.error).toBe('Stellar transaction hash is missing or invalid');
+    });
+
+    it('returns 200 with transaction details when stellar transaction hash is present', async () => {
+      const prisma = require('../../lib/prisma').default;
+      const createdAt = new Date();
+      prisma.transaction.findFirst.mockResolvedValueOnce({
+        id: 'tx-123',
+        type: 'DEPOSIT',
+        status: 'COMPLETED',
+        amount: '50.00',
+        assetCode: 'USDC',
+        stellarTxId: 'hash-123456789',
+        externalId: 'ext-999',
+        createdAt,
+        updatedAt: createdAt,
+      });
+
+      const res = await request(app).get('/transaction?id=tx-123');
+      expect(res.statusCode).toBe(200);
+      expect(res.body.transaction).toBeDefined();
+      expect(res.body.transaction.id).toBe('tx-123');
+      expect(res.body.transaction.stellar_transaction_id).toBe('hash-123456789');
+    });
   });
 });
+

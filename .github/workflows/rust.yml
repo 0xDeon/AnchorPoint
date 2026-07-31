@@ -1,40 +1,30 @@
-name: Rust Contracts CI
+name: Rust CI
 
 on:
-  push:
-    branches: ["**"]
-    paths:
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "src/**"
-      - "contracts/**"
-      - "scripts/security-audit.sh"
   pull_request:
-    branches: [main]
     paths:
       - "Cargo.toml"
       - "Cargo.lock"
       - "src/**"
       - "contracts/**"
-      - "scripts/security-audit.sh"
 
 jobs:
-  test:
+  rust-checks:
+    name: Clippy and tests
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
         with:
-          targets: wasm32-unknown-unknown,wasm32v1-none
+          components: clippy
+
       - uses: Swatinem/rust-cache@v2
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-scout-audit@0.3.16
-      - name: Install Scout system dependencies
-        run: sudo apt-get update && sudo apt-get install -y libssl-dev pkg-config gcc
-      - name: Test sep41-token
-        run: cargo test -p sep41-token
-      - name: Test upgradeable
-        run: cargo test -p upgradeable
-      - name: Run Security Audit
-        run: ./scripts/security-audit.sh --warn-only
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Test
+        run: cargo test --workspace --all-features

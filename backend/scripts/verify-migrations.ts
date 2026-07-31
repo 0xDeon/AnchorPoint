@@ -16,7 +16,6 @@
 import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as os from 'os';
 
 interface MigrationCheckResult {
   success: boolean;
@@ -33,6 +32,7 @@ interface MigrationCheckResult {
 
 class MigrationVerifier {
   private tempDbPath: string;
+  private tempDbUrl: string;
   private prismaBinary: string;
   private schemaPath: string;
   private migrationsPath: string;
@@ -42,6 +42,9 @@ class MigrationVerifier {
       process.env.DATABASE_URL = 'postgresql://prisma:prisma_password@localhost:5432/cidb';
     }
     this.tempDbPath = path.join(os.tmpdir(), `prisma-verify-${Date.now()}.db`);
+    const tempDbName = `prisma-verify-${Date.now()}.db`;
+    this.tempDbPath = path.join(__dirname, '..', tempDbName);
+    this.tempDbUrl = `file:./${tempDbName}`;
     this.prismaBinary = 'npx prisma';
     this.schemaPath = path.join(__dirname, '../prisma/schema.prisma');
     this.migrationsPath = path.join(__dirname, '../prisma/migrations');
@@ -58,7 +61,9 @@ class MigrationVerifier {
         ...options,
       });
     } catch (error: any) {
-      throw new Error(`Command failed: ${command}\n${error.message}`);
+      const stdout = error.stdout ? `\nstdout:\n${error.stdout}` : '';
+      const stderr = error.stderr ? `\nstderr:\n${error.stderr}` : '';
+      throw new Error(`Command failed: ${command}\n${error.message}${stdout}${stderr}`);
     }
   }
 
@@ -73,7 +78,9 @@ class MigrationVerifier {
         ...options,
       });
     } catch (error: any) {
-      throw new Error(`Command failed: ${command}\n${error.message}`);
+      const stdout = error.stdout ? `\nstdout:\n${error.stdout}` : '';
+      const stderr = error.stderr ? `\nstderr:\n${error.stderr}` : '';
+      throw new Error(`Command failed: ${command}\n${error.message}${stdout}${stderr}`);
     }
   }
 
@@ -117,8 +124,8 @@ class MigrationVerifier {
         DATABASE_URL: process.env.DATABASE_URL || 'postgresql://prisma:prisma_password@localhost:5432/cidb',
       };
 
-      // Reset and apply migrations
-      this.runSilent(`${this.prismaBinary} migrate reset --force`, {
+      // Apply committed migrations to the temporary database.
+      this.runSilent(`${this.prismaBinary} migrate deploy`, {
         env,
         cwd: path.join(__dirname, '..'),
       });

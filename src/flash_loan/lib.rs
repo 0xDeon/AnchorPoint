@@ -95,29 +95,26 @@ impl FlashLoanProvider {
     /// * `token` - The address of the token to be lent.
     /// * `amount` - The amount of tokens to lend.
     pub fn flash_loan(env: Env, receiver: Address, token: Address, amount: i128) {
-        // 1. Calculate the fee (default 5 basis points = 0.05%)
+        // 1. Calculate the fee (e.g. default 5 bps = 0.05%, or configured fee_bps such as 9 bps = 0.09%)
         let fee_bps = Self::get_fee_bps(env.clone());
         let fee = calculate_fee(amount, fee_bps);
 
-        // 2. Initial balance check
+        // 2. Read vault balance prior to invoking borrower contract execution
         let token_client = token::Client::new(&env, &token);
         let balance_before = token_client.balance(&env.current_contract_address());
 
-        // 3. Transfer tokens to the receiver
+        // 3. Compute required return: original balance + (amount * fee_bps / 10000)
+        let required_repayment = checked_repayment_amount(balance_before, fee);
+
+        // 4. Transfer tokens to the receiver
         token_client.transfer(&env.current_contract_address(), &receiver, &amount);
 
-        // 4. Invoke the receiver's execution logic
+        // 5. Invoke the receiver's execution logic
         let receiver_client = FlashLoanReceiverClient::new(&env, &receiver);
         receiver_client.execute_loan(&token, &amount, &fee);
 
-        // 5. Verify repayment
-        // This ensures atomic repayment enforcement. If the balance check fails, the
-        // whole transaction reverts, ensuring the loan is only successful if repaid.
-        // Soroban's call stack management and the lack of contract state in this provider
-        // make it naturally resistant to reentrancy attacks.
+        // 6. Assert post-execution balance is greater than or equal to required return
         let balance_after = token_client.balance(&env.current_contract_address());
-
-        let required_repayment = checked_repayment_amount(balance_before, fee);
         if balance_after < required_repayment {
             panic!("Flash loan not repaid with fee");
         }
