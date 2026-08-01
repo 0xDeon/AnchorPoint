@@ -22,8 +22,8 @@ pub struct BridgeContractClient<'a> {
     contract_id: &'a Address,
 }
 
-impl<'a> BridgeContractClient<'a> {
-    pub fn new(env: &'a Env, contract_id: &'a Address) -> Self {
+impl BridgeContractClient<'_> {
+    pub fn new(env: &Env, contract_id: &Address) -> Self {
         Self { env, contract_id }
     }
 

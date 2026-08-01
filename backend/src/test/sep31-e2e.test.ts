@@ -7,7 +7,7 @@ import prisma from '../lib/prisma';
 jest.mock('../api/middleware/auth.middleware', () => ({
   authMiddleware: (req: any, res: any, next: any) => {
     req.user = {
-      publicKey: req.body?.account || req.query?.account || 'GB7KUA47QKRI6Q6X7C3HOC2HEP6VJQRQWQYQF66VJPHJRVMEDJOVML6K'
+      publicKey: req.headers['x-mock-account'] || req.body?.account || req.query?.account || 'GB7KUA47QKRI6Q6X7C3HOC2HEP6VJQRQWQYQF66VJPHJRVMEDJOVML6K'
     };
     next();
   },
@@ -70,6 +70,7 @@ e2eSuite('SEP-31 Cross-Border Payment E2E Flow', () => {
 
       const res = await request(app)
         .put('/sep12/customer')
+        .set('x-mock-account', clientPublicKey)
         .field('account', clientPublicKey)
         .field('first_name', 'Alice')
         .field('last_name', 'Smith')
@@ -94,6 +95,7 @@ e2eSuite('SEP-31 Cross-Border Payment E2E Flow', () => {
 
       const res = await request(app)
         .put('/sep12/customer')
+        .set('x-mock-account', receiverKey)
         .field('account', receiverKey)
         .field('first_name', 'Bob')
         .field('last_name', 'Johnson')
@@ -190,8 +192,8 @@ e2eSuite('SEP-31 Cross-Border Payment E2E Flow', () => {
         .patch(`/api/admin/transactions/${transactionId}`)
         .send({
           status: 'completed',
-          stellar_transaction_id: 'stellar_settlement_tx_789',
-          external_transaction_id: 'bank_transfer_101112',
+          stellar_transaction_id: 'stellar_settlement_tx_789_sep31',
+          external_transaction_id: 'bank_transfer_101112_sep31',
           amount_out: '495.00',
           amount_fee: '5.00'
         });
@@ -210,8 +212,8 @@ e2eSuite('SEP-31 Cross-Border Payment E2E Flow', () => {
       expect(res.body.transaction.amount_in).toBe('500.00');
       expect(res.body.transaction.amount_out).toBe('495.00');
       expect(res.body.transaction.amount_fee).toBe('5.00');
-      expect(res.body.transaction.stellar_transaction_id).toBe('stellar_settlement_tx_789');
-      expect(res.body.transaction.external_transaction_id).toBe('bank_transfer_101112');
+      expect(res.body.transaction.stellar_transaction_id).toBe('stellar_settlement_tx_789_sep31');
+      expect(res.body.transaction.external_transaction_id).toBe('bank_transfer_101112_sep31');
       expect(res.body.transaction).toHaveProperty('completed_at');
     });
   });

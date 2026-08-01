@@ -2,6 +2,12 @@ import request from 'supertest';
 import prisma from './lib/prisma';
 import { redis } from './lib/redis';
 
+if (!process.env.PRODUCTION_CORS_ORIGINS) {
+  process.env.PRODUCTION_CORS_ORIGINS = 'http://localhost:3000,https://allowed.example.com';
+}
+
+const mockedPublicLimiter = jest.fn((req: any, res: any, next: any) => next());
+
 jest.mock('./lib/prisma', () => ({
   __esModule: true,
   default: {
@@ -18,7 +24,7 @@ jest.mock('./api/middleware/rate-limit.middleware', () => ({
   apiLimiter: (req: any, res: any, next: any) => next(),
   authLimiter: (req: any, res: any, next: any) => next(),
   sensitiveApiLimiter: (req: any, res: any, next: any) => next(),
-  publicLimiter: (req: any, res: any, next: any) => next(),
+  publicLimiter: mockedPublicLimiter,
 }));
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -66,5 +72,39 @@ describe('Backend API', () => {
     const res = await request(app).get('/');
     expect(res.statusCode).toEqual(200);
     expect(res.text).toContain('AnchorPoint Backend API is running.');
+  });
+
+  it('should include CORS header for allowed origin', async () => {
+    const res = await request(app)
+      .get('/')
+      .set('Origin', 'http://localhost:3000');
+
+    expect(res.statusCode).toEqual(200);
+    expect(res.headers['access-control-allow-origin']).toEqual('http://localhost:3000');
+  });
+
+  it('should not include CORS header for blocked origin', async () => {
+    const res = await request(app)
+      .get('/')
+      .set('Origin', 'https://blocked.example.com');
+
+    expect(res.statusCode).toEqual(200);
+    expect(res.headers['access-control-allow-origin']).toBeUndefined();
+  });
+
+  it('should mount each public route exactly once with publicLimiter', () => {
+    const publicPaths = ['/sep31', '/sep38', '/info', '/sep24', '/sep6', '/metrics'];
+    const stack = (app as any)._router?.stack ?? [];
+
+    for (const path of publicPaths) {
+      const matchingLayers = stack.filter((layer: any) => (
+        layer?.regexp instanceof RegExp && layer.regexp.test(path)
+      ));
+      const limiterLayers = matchingLayers.filter((layer: any) => layer.handle === mockedPublicLimiter);
+      const routerLayers = matchingLayers.filter((layer: any) => layer.name === 'router');
+
+      expect(limiterLayers).toHaveLength(1);
+      expect(routerLayers).toHaveLength(1);
+    }
   });
 });

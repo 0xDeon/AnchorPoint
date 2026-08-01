@@ -32,6 +32,36 @@ export class RecurringPaymentsService {
     return interval.next().toDate();
   }
 
+  /**
+   * Computes the exponential backoff delay (in milliseconds) before the given
+   * retry attempt. `attempt` is 1-based: attempt 1 is the first retry after an
+   * initial failure.
+   *
+   * delay = min(base * multiplier^(attempt-1), maxDelay), with optional
+   * +/- jitter to spread out retries across many schedules.
+   */
+  computeBackoffDelayMs(attempt: number): number {
+    const base = config.RECURRING_PAYMENTS_BACKOFF_BASE_MS;
+    const multiplier = config.RECURRING_PAYMENTS_BACKOFF_MULTIPLIER;
+    const maxDelay = config.RECURRING_PAYMENTS_BACKOFF_MAX_MS;
+    const jitter = config.RECURRING_PAYMENTS_BACKOFF_JITTER;
+
+    const safeAttempt = Math.max(1, Math.floor(attempt));
+    const raw = base * Math.pow(multiplier, safeAttempt - 1);
+    const capped = Math.min(raw, maxDelay);
+
+    if (jitter <= 0) {
+      return Math.round(capped);
+    }
+
+    // Apply symmetric jitter in the range [-jitter, +jitter].
+    const jitterFactor = 1 + (Math.random() * 2 - 1) * jitter;
+    const withJitter = capped * jitterFactor;
+
+    // Clamp to [0, maxDelay] so jitter can never exceed the configured ceiling.
+    return Math.round(Math.min(Math.max(withJitter, 0), maxDelay));
+  }
+
   validateScheduleInput(input: RecurringPaymentScheduleInput): void {
     if (!isValidStellarPublicKey(input.destination)) {
       throw new Error('Invalid destination Stellar address');
@@ -229,15 +259,16 @@ export class RecurringPaymentsService {
           where: { id: schedule.id },
         });
 
-        // Skip schedule execution if status is already PROCESSING or not ACTIVE
-        if (!currentSchedule || currentSchedule.status === 'PROCESSING') {
+        // Skip if there is already an in-flight run for this schedule.
+        // We detect this by checking if an ACTIVE run exists rather than
+        // setting an invalid 'PROCESSING' status on the schedule itself
+        // (RecurringPaymentScheduleStatus only has ACTIVE | PAUSED | CANCELLED).
+        if (!currentSchedule || currentSchedule.status !== 'ACTIVE') {
           return null;
         }
 
-        await tx.recurringPaymentSchedule.update({
-          where: { id: schedule.id },
-          data: { status: 'PROCESSING' },
-        });
+        // No status flip needed on the schedule — just record the run.
+        const attempt = (currentSchedule.retryCount ?? 0) + 1;
 
         const run = await tx.recurringPaymentRun.create({
           data: {
@@ -247,7 +278,7 @@ export class RecurringPaymentsService {
               },
             },
             status: 'PROCESSING',
-            attempt: 1,
+            attempt,
             startedAt: new Date(),
           },
         });
@@ -294,6 +325,8 @@ export class RecurringPaymentsService {
             data: {
               status: 'ACTIVE',
               lastRunAt: now,
+              // Successful run clears any accumulated retry state.
+              retryCount: 0,
               nextRunAt,
             },
           }),
@@ -302,13 +335,44 @@ export class RecurringPaymentsService {
         processed += 1;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        logger.error('Recurring payment run failed', {
-          scheduleId: schedule.id,
-          runId: run.id,
-          error: message,
-        });
 
-        const nextRunAt = this.computeNextRunAt(schedule.cron, now);
+        // `run.attempt` is the attempt number that just failed (1-based).
+        const failedAttempt = run.attempt;
+        const maxRetries = config.RECURRING_PAYMENTS_MAX_RETRIES;
+
+        // Decide whether to retry this occurrence with exponential backoff or
+        // give up and defer to the next cron-scheduled run.
+        const shouldRetry = failedAttempt <= maxRetries;
+
+        let nextRunAt: Date;
+        let nextRetryCount: number;
+
+        if (shouldRetry) {
+          const delayMs = this.computeBackoffDelayMs(failedAttempt);
+          nextRunAt = new Date(now.getTime() + delayMs);
+          nextRetryCount = failedAttempt;
+          logger.warn('Recurring payment run failed; scheduling backoff retry', {
+            scheduleId: schedule.id,
+            runId: run.id,
+            attempt: failedAttempt,
+            maxRetries,
+            delayMs,
+            nextRunAt: nextRunAt.toISOString(),
+            error: message,
+          });
+        } else {
+          // Retries exhausted: reset state and wait for the next cron occurrence.
+          nextRunAt = this.computeNextRunAt(schedule.cron, now);
+          nextRetryCount = 0;
+          logger.error('Recurring payment run failed; retries exhausted', {
+            scheduleId: schedule.id,
+            runId: run.id,
+            attempt: failedAttempt,
+            maxRetries,
+            nextRunAt: nextRunAt.toISOString(),
+            error: message,
+          });
+        }
 
         await prisma.$transaction([
           prisma.recurringPaymentRun.update({
@@ -324,6 +388,7 @@ export class RecurringPaymentsService {
             data: {
               status: 'ACTIVE',
               lastRunAt: now,
+              retryCount: nextRetryCount,
               nextRunAt,
             },
           }),

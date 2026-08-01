@@ -6,7 +6,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -93,6 +93,9 @@ model RecurringPaymentSchedule {
   status      RecurringPaymentScheduleStatus @default(ACTIVE)
   nextRunAt   DateTime
   lastRunAt   DateTime?
+  // Number of consecutive failed executions for the current occurrence.
+  // Reset to 0 after a successful run or after retries are exhausted.
+  retryCount  Int                            @default(0)
   createdAt   DateTime                       @default(now())
   updatedAt   DateTime                       @updatedAt
   runs        RecurringPaymentRun[]
@@ -147,9 +150,10 @@ model Transaction {
   refunded            Boolean        @default(false)
 
   @@index([userId])
-  @@index([type])
-  @@index([status])
-  @@index([createdAt])
+   @@index([type])
+   @@index([status])
+   @@index([createdAt])
+   @@index([status, createdAt])
 }
 
 model FeeReport {
@@ -213,6 +217,7 @@ enum KYCStatus {
   PENDING
   ACCEPTED
   REJECTED
+  KYC_EXPIRING_SOON
 }
 
 model KycCustomer {
@@ -225,6 +230,7 @@ model KycCustomer {
   lastName    String?
   email       String?
   status      KYCStatus @default(PENDING)
+  expiresAt   DateTime?
   extraFields Json?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -257,6 +263,29 @@ model SystemConfig {
   createdAt DateTime @default(now())
 
   @@index([isActive])
+  @@index([createdAt])
+}
+
+// Immutable audit trail for privileged system configuration changes.
+// Every create/update/rollback of the dynamic SystemConfig produces one row
+// capturing who made the change, from where, and what changed.
+model AdminConfigAuditLog {
+  id              String   @id @default(uuid())
+  action          String // CONFIG_UPDATE | CONFIG_UI_UPDATE | CONFIG_ROLLBACK
+  actorId         String? // Admin user id, when known
+  actorEmail      String? // Admin email / api-key label, when known
+  actorIp         String?
+  userAgent       String?
+  configVersion   Int? // Resulting config version after the change
+  previousVersion Int? // Config version prior to the change
+  changedKeys     String? // JSON array of changed top-level config keys
+  diff            String? // JSON object: { key: { before, after } }
+  metadata        String? // JSON object with any extra context
+  createdAt       DateTime @default(now())
+
+  @@index([action])
+  @@index([actorId])
+  @@index([configVersion])
   @@index([createdAt])
 }
 
@@ -400,4 +429,17 @@ model CrawlJobRecord {
   compliantCount    Int
   nonCompliantCount Int
   suspiciousCount   Int
+}
+
+model UploadRecord {
+  id          String   @id @default(uuid())
+  key         String   @unique
+  contentType String
+  status      String   @default("PENDING")
+  isTemporary Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([status])
+  @@index([isTemporary, status, createdAt])
 }

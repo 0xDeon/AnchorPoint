@@ -3,6 +3,7 @@ import {
   getKeyManagementService,
   initializeKeyManagement,
 } from '../lib/key-management.service';
+import { redis as cache } from '../lib/redis';
 import {
   KeyManagementError,
   KeyManagementErrorType,
@@ -10,6 +11,8 @@ import {
 } from '../lib/key-management.types';
 import { config } from '../config/env';
 import logger from '../utils/logger';
+
+const HOT_WALLET_KEYS_CACHE_KEY = 'hot_wallet_keys';
 
 /**
  * Service for automated encryption key rotation.
@@ -57,6 +60,9 @@ export class KeyRotationService {
     logger.info('Starting automated key rotation');
     const result = await keyManagementService.rotateEncryptionKey();
 
+    await cache.del(HOT_WALLET_KEYS_CACHE_KEY);
+    this.refreshKeyMaterialInMemory();
+
     logger.info('Automated key rotation completed', {
       backend: result.backend,
       rotated: result.rotated,
@@ -64,5 +70,17 @@ export class KeyRotationService {
     });
 
     return result;
+  }
+
+  private refreshKeyMaterialInMemory(): void {
+    const keyConfig = buildKeyManagementConfigFromEnv(config);
+    if (!keyConfig) {
+      throw new KeyManagementError(
+        KeyManagementErrorType.INVALID_CONFIG,
+        'Key management is not configured. Set AWS_KMS_KEY_ARN or Vault credentials.'
+      );
+    }
+
+    initializeKeyManagement(keyConfig);
   }
 }
