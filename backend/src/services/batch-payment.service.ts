@@ -24,6 +24,7 @@ import { isValidStellarPublicKey } from '../utils/stellar-address';
 import { SequenceNumberManager } from './sequence-number.service';
 import { getKeyManagementService } from '../lib/key-management.service';
 import { KeyManagementError } from '../lib/key-management.types';
+import { redlock } from '../lib/redis';
 import {
   BatchPaymentRequest,
   BatchPaymentResult,
@@ -43,14 +44,16 @@ const DEFAULT_CONFIG: Partial<BatchPaymentConfig> = {
   retryDelayMs: 1000,
   networkPassphrase: Networks.TESTNET,
   horizonUrl: 'https://horizon-testnet.stellar.org',
+  useDistributedLocking: true,
 };
 
 export class BatchPaymentService {
   private config: BatchPaymentConfig;
   private server: Horizon.Server;
   private sequenceManager: SequenceNumberManager;
+  private lockClient: typeof redlock;
 
-  constructor(config?: Partial<BatchPaymentConfig>) {
+  constructor(config?: Partial<BatchPaymentConfig>, lockClient?: typeof redlock) {
     this.config = {
       ...DEFAULT_CONFIG,
       ...config,
@@ -61,6 +64,7 @@ export class BatchPaymentService {
       this.config.redisKeyPrefix,
       this.config.lockTimeoutSeconds
     );
+    this.lockClient = lockClient ?? redlock;
   }
 
   /**
@@ -70,8 +74,24 @@ export class BatchPaymentService {
    * The key is held in memory only for the duration of the signing operation.
    */
   async executeBatch(request: BatchPaymentRequest): Promise<BatchPaymentResult> {
-    const batchId = uuidv4();
+    const batchId = request.batchId || uuidv4();
     logger.info(`[Batch ${batchId}] Starting batch payment with ${request.payments.length} operations`);
+
+    const lockKey = `${this.config.redisKeyPrefix}:lock:${batchId}`;
+    let lock: any = null;
+
+    if (this.config.useDistributedLocking && this.lockClient) {
+      try {
+        lock = await this.lockClient.acquire([lockKey], this.config.lockTimeoutSeconds * 1000);
+        logger.info(`[Batch ${batchId}] Acquired distributed lock`);
+      } catch (error: any) {
+        logger.warn(`[Batch ${batchId}] Failed to acquire lock, proceeding without distributed lock. (${error?.message ?? error})`);
+      }
+    } else {
+      logger.debug(`[Batch ${batchId}] Distributed locking disabled or lock client not provided; running without distributed lock`);
+    }
+
+    try {
 
     // Validate batch size
     if (request.payments.length > this.config.maxOperationsPerBatch) {
@@ -190,6 +210,16 @@ export class BatchPaymentService {
       `Batch payment failed after ${this.config.maxRetries} attempts: ${lastError?.message}`,
       { lastError }
     );
+    } finally {
+      if (lock) {
+        try {
+          await lock.release();
+          logger.info(`[Batch ${batchId}] Released distributed lock`);
+        } catch (error) {
+          logger.error(`[Batch ${batchId}] Failed to release lock: ${error}`);
+        }
+      }
+    }
   }
 
   /**
@@ -200,7 +230,8 @@ export class BatchPaymentService {
     sourceSecretKey?: string,
     chunkSize: number = 100,
     encryptedKey?: BatchPaymentRequest['encryptedKey'],
-    keyId?: string
+    keyId?: string,
+    baseBatchId?: string
   ): Promise<BatchPaymentResult[]> {
     const results: BatchPaymentResult[] = [];
     const chunks = this.chunkArray(payments, chunkSize);
@@ -209,9 +240,11 @@ export class BatchPaymentService {
 
     for (let i = 0; i < chunks.length; i++) {
       const chunk = chunks[i];
+      const perChunkBatchId = `${baseBatchId || uuidv4()}-${i+1}`;
       logger.info(`Processing batch ${i + 1}/${chunks.length} with ${chunk.length} payments`);
 
       const result = await this.executeBatch({
+        batchId: perChunkBatchId,
         payments: chunk,
         sourceSecretKey,
         encryptedKey,

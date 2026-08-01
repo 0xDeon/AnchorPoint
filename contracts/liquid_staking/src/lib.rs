@@ -395,9 +395,9 @@ impl LiquidStaking {
         let nft_rpt: i128 = env.storage().persistent().get(&DataKey::NftRewardPerTokenPaid(token_id)).unwrap_or(0);
         let amount: i128 = env.storage().persistent().get(&DataKey::StakeAmount(token_id)).unwrap_or(0);
         let accrued: i128 = env.storage().persistent().get(&DataKey::NftRewards(token_id)).unwrap_or(0);
-        
+        let delta = rpt.checked_sub(nft_rpt).unwrap_or_else(|| panic_with_error!(env, Error::RewardsOverflow));
         let pending = accrued.checked_add(
-            amount.checked_mul(rpt - nft_rpt).unwrap_or_else(|| panic_with_error!(env, Error::RewardsOverflow)) / PRECISION
+            amount.checked_mul(delta).unwrap_or_else(|| panic_with_error!(env, Error::RewardsOverflow)) / PRECISION
         ).unwrap_or_else(|| panic_with_error!(env, Error::RewardsOverflow));
         let lock_time: u64 = env.storage().persistent().get(&DataKey::StakeLockTime(token_id)).unwrap_or(0);
 
@@ -508,7 +508,8 @@ impl LiquidStaking {
         let rpt: i128 = env.storage().instance().get(&DataKey::RewardPerTokenStored).unwrap_or(0);
         let nft_rpt: i128 = env.storage().persistent().get(&DataKey::NftRewardPerTokenPaid(token_id)).unwrap_or(0);
         let amount: i128 = env.storage().persistent().get(&DataKey::StakeAmount(token_id)).unwrap_or(0);
-        let earned = amount.checked_mul(rpt - nft_rpt).unwrap_or_else(|| panic_with_error!(env, Error::RewardsOverflow)) / PRECISION;
+        let delta = rpt.checked_sub(nft_rpt).unwrap_or_else(|| panic_with_error!(env, Error::RewardsOverflow));
+        let earned = amount.checked_mul(delta).unwrap_or_else(|| panic_with_error!(env, Error::RewardsOverflow)) / PRECISION;
 
         if earned > 0 {
             let prev: i128 = env.storage().persistent().get(&DataKey::NftRewards(token_id)).unwrap_or(0);

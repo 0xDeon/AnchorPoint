@@ -10,6 +10,7 @@ export interface Notification {
   status: 'PENDING' | 'SENT' | 'FAILED';
   message: string;
   createdAt: string;
+  readAt?: string | null;
 }
 
 interface NotificationBellProps {
@@ -27,7 +28,7 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
   const [error, setError] = useState<string | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  const unreadCount = notifications.filter((n) => n.status === 'PENDING').length;
+  const unreadCount = notifications.filter((notification) => notification.status === 'PENDING' && !notification.readAt).length;
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -86,6 +87,28 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
     }
   };
 
+  const markAllAsRead = async () => {
+    const unreadIds = notifications.filter((notification) => notification.status === 'PENDING' && !notification.readAt).map((notification) => notification.id);
+    if (unreadIds.length === 0) {
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem('authToken');
+      await fetch(`${apiBaseUrl}/api/notifications/history`, {
+        method: 'PATCH',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ notificationIds: unreadIds }),
+      });
+      setNotifications((current) => current.map((notification) => (unreadIds.includes(notification.id) ? { ...notification, readAt: new Date().toISOString() } : notification)));
+    } catch (err) {
+      console.error('Failed to mark notifications as read', err);
+    }
+  };
+
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'SENT':
@@ -140,14 +163,27 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
             className="absolute right-0 z-50 mt-2 w-96 rounded-lg border border-slate-700 bg-slate-900 shadow-xl"
           >
             <div className="flex items-center justify-between border-b border-slate-700 p-4">
-              <h3 className="font-semibold text-slate-100">Notifications</h3>
-              <button
-                onClick={() => setIsOpen(false)}
-                className="rounded p-1 hover:bg-slate-800"
-                aria-label="Close notifications"
-              >
-                <X size={18} className="text-slate-400" />
-              </button>
+              <div>
+                <h3 className="font-semibold text-slate-100">Notifications</h3>
+                <p className="text-xs text-slate-400">{unreadCount > 0 ? `${unreadCount} unread` : 'All caught up'}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                {unreadCount > 0 && (
+                  <button
+                    onClick={() => void markAllAsRead()}
+                    className="rounded px-2 py-1 text-xs font-medium text-slate-300 hover:bg-slate-800"
+                  >
+                    Mark all read
+                  </button>
+                )}
+                <button
+                  onClick={() => setIsOpen(false)}
+                  className="rounded p-1 hover:bg-slate-800"
+                  aria-label="Close notifications"
+                >
+                  <X size={18} className="text-slate-400" />
+                </button>
+              </div>
             </div>
 
             <div className="max-h-96 overflow-y-auto">
@@ -168,13 +204,18 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
                     <div
                       key={notification.id}
                       className={`p-4 transition-colors hover:bg-slate-800/50 ${
-                        notification.status === 'PENDING' ? 'bg-slate-800/30' : ''
+                        notification.status === 'PENDING' && !notification.readAt ? 'bg-slate-800/30' : ''
                       }`}
                     >
                       <div className="flex items-start gap-3">
                         <div className="mt-1">{getStatusIcon(notification.status)}</div>
                         <div className="min-w-0 flex-1">
-                          <p className="text-sm text-slate-200">{notification.message}</p>
+                          <div className="flex items-center gap-2">
+                            <p className="text-sm text-slate-200">{notification.message}</p>
+                            {notification.status === 'PENDING' && !notification.readAt && (
+                              <span className="inline-flex h-2.5 w-2.5 rounded-full bg-red-500" aria-label="Unread notification" />
+                            )}
+                          </div>
                           <div className="mt-1 flex items-center gap-2 text-xs text-slate-500">
                             <span className="capitalize">{notification.type.toLowerCase()}</span>
                             <span>•</span>
