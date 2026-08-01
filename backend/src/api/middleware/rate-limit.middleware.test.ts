@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { submissionLimiterOptions } from './rate-limit.middleware';
+import { submissionLimiterOptions, TIER_LIMITS, TIER_AUTH_LIMITS, TIER_SENSITIVE_LIMITS } from './rate-limit.middleware';
 import * as StellarSdk from '@stellar/stellar-sdk';
 
 jest.mock('@stellar/stellar-sdk', () => {
@@ -11,6 +11,27 @@ jest.mock('@stellar/stellar-sdk', () => {
     },
   };
 });
+
+jest.mock('rate-limit-redis', () => {
+  return jest.fn().mockImplementation(() => ({
+    init: jest.fn(),
+    increment: jest.fn().mockResolvedValue({ totalHits: 1, resetTime: new Date() }),
+    decrement: jest.fn(),
+    resetKey: jest.fn(),
+  }));
+});
+
+jest.mock('../../lib/redis', () => ({
+  redis: {
+    call: jest.fn().mockResolvedValue(undefined),
+  },
+}));
+
+jest.mock('../../utils/logger', () => ({
+  warn: jest.fn(),
+  debug: jest.fn(),
+  error: jest.fn(),
+}));
 
 describe('Rate Limit Middleware', () => {
   describe('submissionLimiter keyGenerator', () => {
@@ -84,6 +105,69 @@ describe('Rate Limit Middleware', () => {
     it('should export a shared public Redis-backed limiter', () => {
       const { publicLimiter } = require('./rate-limit.middleware');
       expect(publicLimiter).toBeDefined();
+    });
+  });
+
+  describe('TIER_LIMITS', () => {
+    it('should define limits for Free tier: 60 req/min', () => {
+      expect(TIER_LIMITS.Free).toEqual({ windowMs: 60000, max: 60 });
+    });
+
+    it('should define limits for Pro tier: 600 req/min', () => {
+      expect(TIER_LIMITS.Pro).toEqual({ windowMs: 60000, max: 600 });
+    });
+
+    it('should define limits for Enterprise tier: 3000 req/min', () => {
+      expect(TIER_LIMITS.Enterprise).toEqual({ windowMs: 60000, max: 3000 });
+    });
+  });
+
+  describe('TIER_AUTH_LIMITS', () => {
+    it('should define auth limits for Free tier: 10 req/10min', () => {
+      expect(TIER_AUTH_LIMITS.Free).toEqual({ windowMs: 600000, max: 10 });
+    });
+
+    it('should define auth limits for Pro tier: 50 req/10min', () => {
+      expect(TIER_AUTH_LIMITS.Pro).toEqual({ windowMs: 600000, max: 50 });
+    });
+
+    it('should define auth limits for Enterprise tier: 200 req/10min', () => {
+      expect(TIER_AUTH_LIMITS.Enterprise).toEqual({ windowMs: 600000, max: 200 });
+    });
+  });
+
+  describe('TIER_SENSITIVE_LIMITS', () => {
+    it('should define sensitive limits for Free tier: 5 req/min', () => {
+      expect(TIER_SENSITIVE_LIMITS.Free).toEqual({ windowMs: 60000, max: 5 });
+    });
+
+    it('should define sensitive limits for Pro tier: 20 req/min', () => {
+      expect(TIER_SENSITIVE_LIMITS.Pro).toEqual({ windowMs: 60000, max: 20 });
+    });
+
+    it('should define sensitive limits for Enterprise tier: 100 req/min', () => {
+      expect(TIER_SENSITIVE_LIMITS.Enterprise).toEqual({ windowMs: 60000, max: 100 });
+    });
+  });
+
+  describe('tieredApiLimiter', () => {
+    it('should export a tiered API limiter', () => {
+      const { tieredApiLimiter } = require('./rate-limit.middleware');
+      expect(tieredApiLimiter).toBeDefined();
+    });
+  });
+
+  describe('tieredAuthLimiter', () => {
+    it('should export a tiered auth limiter', () => {
+      const { tieredAuthLimiter } = require('./rate-limit.middleware');
+      expect(tieredAuthLimiter).toBeDefined();
+    });
+  });
+
+  describe('tieredSensitiveLimiter', () => {
+    it('should export a tiered sensitive limiter', () => {
+      const { tieredSensitiveLimiter } = require('./rate-limit.middleware');
+      expect(tieredSensitiveLimiter).toBeDefined();
     });
   });
 });

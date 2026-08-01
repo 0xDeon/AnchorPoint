@@ -75,6 +75,10 @@ class ConfigService {
     return this.currentConfig.ui;
   }
 
+  public getSep31Config(): DynamicConfig['sep31'] {
+    return this.currentConfig.sep31;
+  }
+
   public async getHistory() {
     return prisma.systemConfig.findMany({
       orderBy: { version: 'desc' },
