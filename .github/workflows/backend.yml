@@ -1,5 +1,5 @@
 name: Backend CI/CD
-  
+
 on:
   push:
     branches: ["**"]
@@ -91,8 +91,23 @@ jobs:
         env:
           DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/cidb"
         run: node scripts/validate-migration-env.js
+
+      # Clean the verification database schema before running migrations
+      # This ensures a fresh state and prevents "relation already exists" errors
+      - name: Clean verification database schema
+        env:
+          DATABASE_URL: "postgresql://prisma:prisma_password@localhost:5432/cidb"
+        run: |
+          npx prisma db execute --url "$DATABASE_URL" --stdin <<EOF
+          DROP SCHEMA IF EXISTS public CASCADE;
+          CREATE SCHEMA public;
+          EOF
+
       - name: Verify Migrations Against Temporary Database
         env:
+          DATABASE_URL: "postgresql://prisma:prisma_password@localhost:5432/cidb"
+          SHADOW_DATABASE_URL: "postgresql://prisma:prisma_password@localhost:5433/shadowdb"
+          VERIFY_MIGRATIONS_ALLOW_RESET: "true"
           DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/cidb"
           SHADOW_DATABASE_URL: "postgresql://postgres:postgres@localhost:5433/shadowdb"
         run: npm run migrate:verify

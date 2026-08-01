@@ -83,7 +83,7 @@ export class StellarService {
   public async getAccountSigners(accountId: string): Promise<AccountSigners> {
     const server = this.getHorizonServer();
     const account = await server.loadAccount(accountId);
-    
+
     return {
       signers: account.signers.map((signer: any) => ({
         key: signer.key,
@@ -122,15 +122,15 @@ export class StellarService {
     const networkPassphrase = this.getPassphrase();
     const serverSecret = config.ANCHOR_SECRET_KEY || '';
     const serverKeypair = Keypair.fromSecret(serverSecret);
-    
+
     // Verify the server account ID matches the secret key
     if (serverKeypair.publicKey() !== serverAccountId) {
       throw new Error('Server account ID does not match secret key');
     }
-    
+
     // Create a simple account for the server (we don't need to load it for building)
     const serverAccount = new Account(serverAccountId, '1');
-    
+
     const builder = new TransactionBuilder(serverAccount, {
       networkPassphrase,
       fee: '100'
@@ -177,20 +177,20 @@ export class StellarService {
     try {
       const networkPassphrase = this.getPassphrase();
       const transaction = TransactionBuilder.fromXDR(transactionXdr, networkPassphrase);
-      
+
       // Verify server signature
       const serverSecret = config.ANCHOR_SECRET_KEY || '';
       const serverKeypair = Keypair.fromSecret(serverSecret);
-      
-      if (!transaction.signatures.some((sig: any) => 
+
+      if (!transaction.signatures.some((sig: any) =>
         serverKeypair.verify(transaction.hash(), sig.signature())
       )) {
         return { valid: false, error: 'Invalid server signature' };
       }
 
       // Extract client account from operations
-      const manageDataOp = transaction.operations.find((op: any) => 
-        op.type === 'manage_data' && 
+      const manageDataOp = transaction.operations.find((op: any) =>
+        op.type === 'manage_data' &&
         op.name === `${domain} auth`
       ) as any;
 
@@ -199,7 +199,7 @@ export class StellarService {
       }
 
       const clientAccountId = manageDataOp.source;
-      
+
       // Get account signers to verify signatures
       const accountSigners = await this.getAccountSigners(clientAccountId);
       const validSigners: string[] = [];
@@ -226,9 +226,9 @@ export class StellarService {
       };
 
     } catch (error) {
-      return { 
-        valid: false, 
-        error: error instanceof Error ? error.message : 'Transaction verification failed' 
+      return {
+        valid: false,
+        error: error instanceof Error ? error.message : 'Transaction verification failed'
       };
     }
   }
@@ -258,7 +258,7 @@ export class StellarService {
       const passphrase = this.getPassphrase();
       const server = this.getHorizonServer();
       const tx = TransactionBuilder.fromXDR(xdr, passphrase);
-      
+
       // Ensure it's not a fee-bump transaction itself
       if (tx instanceof FeeBumpTransaction) {
         throw new Error('Direct submission of fee-bump transactions is not allowed');
@@ -272,7 +272,7 @@ export class StellarService {
 
       // Automated Fee Management: Wrap in a fee-bump transaction if backend is configured
       let finalTx: Transaction | FeeBumpTransaction = transaction;
-      
+
       const feeBumpSecret = config.STELLAR_FEE_BUMP_SECRET;
       if (feeBumpSecret) {
         const feeBumpKeypair = Keypair.fromSecret(feeBumpSecret);
@@ -289,10 +289,10 @@ export class StellarService {
       logger.info(`Transaction submitted successfully: ${response.hash}`);
       return response;
     } catch (error: any) {
-      const errorMessage = error.response?.data?.extras?.result_codes?.operations 
+      const errorMessage = error.response?.data?.extras?.result_codes?.operations
         ? `Stellar Error: ${JSON.stringify(error.response.data.extras.result_codes)}`
         : error.message;
-      
+
       logger.error('Stellar submission error:', errorMessage);
       throw new Error(errorMessage);
     }
@@ -321,6 +321,21 @@ export class StellarService {
       return tx.source;
     } catch (error) {
       throw new Error('Invalid transaction XDR');
+    }
+  }
+
+  /**
+   * Health check for Soroban RPC connectivity
+   */
+  public async getHealth(): Promise<{ status: 'UP' | 'DOWN' }> {
+    try {
+      const sorobanRpc = this.getSorobanRpc();
+      // Attempt to get the latest ledger as a connectivity check
+      await sorobanRpc.getLatestLedger();
+      return { status: 'UP' };
+    } catch (error) {
+      logger.error('Soroban RPC health check failed:', error);
+      return { status: 'DOWN' };
     }
   }
 }
