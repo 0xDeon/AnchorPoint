@@ -9,6 +9,8 @@ export class MetricsService {
   private errorCounter: Counter<string>;
   private dbQueryDuration: Histogram<string>;
   private apiVersionGauge: Gauge<string>;
+  private sep38QuoteRequests: Counter<string>;
+  private sep38QuoteDuration: Histogram<string>;
 
   constructor() {
     this.registry = new promClient.Registry();
@@ -81,6 +83,23 @@ export class MetricsService {
 
     // Set API version (assuming from package.json)
     this.apiVersionGauge.set({ version: '1.0.0' }, 1);
+
+    // SEP-38 quote request counter
+    this.sep38QuoteRequests = new promClient.Counter({
+      name: 'sep38_quote_requests_total',
+      help: 'Total number of SEP-38 quote requests',
+      labelNames: ['status'] as const,
+      registers: [this.registry],
+    });
+
+    // SEP-38 quote duration histogram
+    this.sep38QuoteDuration = new promClient.Histogram({
+      name: 'sep38_quote_duration_seconds',
+      help: 'Duration of SEP-38 quote requests in seconds',
+      labelNames: ['status'] as const,
+      buckets: [0.01, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10],
+      registers: [this.registry],
+    });
   }
 
   /**
@@ -127,6 +146,20 @@ export class MetricsService {
    */
   observeDbQuery(queryType: string, durationSeconds: number): void {
     this.dbQueryDuration.observe({ query_type: queryType }, durationSeconds);
+  }
+
+  /**
+   * Increment SEP-38 quote request counter
+   */
+  incrementSep38QuoteRequests(status: string): void {
+    this.sep38QuoteRequests.inc({ status });
+  }
+
+  /**
+   * Observe SEP-38 quote request duration
+   */
+  observeSep38QuoteDuration(status: string, durationSeconds: number): void {
+    this.sep38QuoteDuration.observe({ status }, durationSeconds);
   }
 
   /**

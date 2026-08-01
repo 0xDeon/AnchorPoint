@@ -1,0 +1,27 @@
+{
+  "nav": {
+    "overview": "Overview",
+    "deposit": "Deposit",
+    "withdraw": "Withdraw",
+    "history": "History",
+    "sep38": "SEP-38 Quote",
+    "status": "Service Status",
+    "notifications": "Notifications",
+    "kyc": "KYC Status",
+    "settings": "Settings"
+  },
+  "wallet": {
+    "connect": "Connect Wallet",
+    "connecting": "Connecting...",
+    "disconnect": "Disconnect",
+    "freighter": "Freighter",
+    "albedo": "Albedo",
+    "rango": "Rango"
+  },
+  "language": {
+    "label": "Language",
+    "en": "English",
+    "es": "Español",
+    "pt": "Português"
+  }
+}

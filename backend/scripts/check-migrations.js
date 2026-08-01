@@ -30,9 +30,16 @@ const { execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
+if (!process.env.DATABASE_URL) {
+    process.env.DATABASE_URL = 'postgresql://prisma:prisma_password@localhost:5432/cidb';
+}
+if (!process.env.SHADOW_DATABASE_URL) {
+    process.env.SHADOW_DATABASE_URL = 'postgresql://prisma:prisma_password@localhost:5433/shadowdb';
+}
+
 const PRISMA_BINARY = 'npx prisma';
 const SCHEMA_PATH = path.join(__dirname, '../prisma/schema.prisma');
-const SHADOW_DB_URL = process.env.SHADOW_DATABASE_URL || 'file:./shadow.db';
+const SHADOW_DB_URL = process.env.SHADOW_DATABASE_URL;
 
 function run(command, options = {}) {
     try {
@@ -49,7 +56,7 @@ function checkDestructiveChanges() {
     // If there are unapplied changes that cause data loss, we warn.
     
     // Skip in CI if database doesn't exist (migration_lock.toml won't exist)
-    const dbUrl = process.env.DATABASE_URL || 'file:./prisma/dev.db';
+    const dbUrl = process.env.DATABASE_URL || 'postgresql://prisma:prisma_password@localhost:5432/cidb';
     if (dbUrl.startsWith('file:')) {
         const dbPath = path.join(__dirname, '../prisma', dbUrl.replace('file:', ''));
         if (!fs.existsSync(dbPath)) {

@@ -1,5 +1,8 @@
 #![no_std]
 
+pub mod reentrancy_guard;
+
+use reentrancy_guard::{ReentrancyGuard, ReentrancyGuardError};
 use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, IntoVal};
 
 #[contracttype]
@@ -176,6 +179,7 @@ impl AMM {
         amount_in: i128,
         min_amount_out: i128,
     ) -> i128 {
+        let _guard = ReentrancyGuard::new(&env).expect("ReentrancyGuardError");
         from.require_auth();
         Self::check_not_paused(&env);
 
@@ -258,6 +262,7 @@ impl AMM {
 
     /// Withdraws liquidity from the pool.
     pub fn withdraw(env: Env, from: Address, shares: i128) -> (i128, i128) {
+        let _guard = ReentrancyGuard::new(&env).expect("ReentrancyGuardError");
         from.require_auth();
         Self::check_not_paused(&env);
 
@@ -536,6 +541,89 @@ mod tests {
 
         client.pause_pool(&admin);
         client.withdraw(&user, &1);
+    }
+
+    #[contract]
+    pub struct MockTokenContract;
+
+    #[contractimpl]
+    impl MockTokenContract {
+        pub fn transfer(_env: Env, _from: Address, _to: Address, _amount: i128) {}
+    }
+
+    #[contract]
+    pub struct ReentrantTokenContract;
+
+    #[contractimpl]
+    impl ReentrantTokenContract {
+        pub fn transfer(env: Env, _from: Address, _to: Address, _amount: i128) {
+            let amm_id: Address = env.storage().instance().get(&symbol_short!("AMM")).unwrap();
+            let client = AMMClient::new(&env, &amm_id);
+            let user: Address = env.storage().instance().get(&symbol_short!("USER")).unwrap();
+            let token_in: Address = env.storage().instance().get(&symbol_short!("TOKEN")).unwrap();
+            client.swap(&user, &token_in, &50, &1);
+        }
+    }
+
+    #[test]
+    fn test_reentrancy_guard_direct_acquisition() {
+        let env = Env::default();
+        let contract_id = env.register(AMM, ());
+        env.as_contract(&contract_id, || {
+            let _guard1 = ReentrancyGuard::new(&env).unwrap();
+            let guard2_res = ReentrancyGuard::new(&env);
+            assert!(matches!(guard2_res, Err(ReentrancyGuardError::ReentrantCall)));
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "ReentrancyGuardError")]
+    fn test_recursive_swap_invocations_fail_with_reentrancy_guard_error() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let admin = Address::generate(&env);
+        let user = Address::generate(&env);
+        let mock_token_id = env.register(MockTokenContract, ());
+
+        let contract_id = env.register(AMM, ());
+        let client = AMMClient::new(&env, &contract_id);
+
+        client.initialize(&admin, &mock_token_id, &mock_token_id);
+
+        env.as_contract(&contract_id, || {
+            env.storage().instance().set(&DataKey::ReserveA, &1000_i128);
+            env.storage().instance().set(&DataKey::ReserveB, &1000_i128);
+
+            let _guard = ReentrancyGuard::new(&env).unwrap();
+            AMM::swap(env.clone(), user.clone(), mock_token_id.clone(), 100, 1);
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "ReentrancyGuardError")]
+    fn test_recursive_withdraw_invocations_fail_with_reentrancy_guard_error() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let admin = Address::generate(&env);
+        let user = Address::generate(&env);
+        let mock_token_id = env.register(MockTokenContract, ());
+
+        let contract_id = env.register(AMM, ());
+        let client = AMMClient::new(&env, &contract_id);
+
+        client.initialize(&admin, &mock_token_id, &mock_token_id);
+
+        env.as_contract(&contract_id, || {
+            env.storage().instance().set(&DataKey::ReserveA, &1000_i128);
+            env.storage().instance().set(&DataKey::ReserveB, &1000_i128);
+            env.storage().instance().set(&DataKey::TotalShares, &1000_i128);
+            env.storage().persistent().set(&DataKey::Shares(user.clone()), &500_i128);
+
+            let _guard = ReentrancyGuard::new(&env).unwrap();
+            AMM::withdraw(env.clone(), user.clone(), 100);
+        });
     }
 }
 

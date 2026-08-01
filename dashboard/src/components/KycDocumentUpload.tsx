@@ -116,7 +116,11 @@ export const KycDocumentUpload = ({ apiBaseUrl, account, fields, onComplete }: K
                 accept={field.accept ?? 'image/jpeg,image/png,application/pdf'}
                 className="sr-only"
                 disabled={state.status === 'uploading'}
-                onChange={(e) => handleFileChange(field, e.target.files?.[0])}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = '';
+                  handleFileChange(field, file);
+                }}
               />
               {state.status === 'complete' && (
                 <CheckCircle2 size={18} className="text-emerald-400" aria-label="Upload complete" />
