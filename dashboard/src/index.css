@@ -19,6 +19,16 @@
   --scrollbar-thumb-active: #cbd5e1;
 }
 
+:root.light {
+  --bg-primary: #f8fafc;
+  --text-primary: #0f172a;
+  --card-bg: #ffffff;
+}
+
+:root.dark {
+  --bg-primary: #020617;
+  --text-primary: #f8fafc;
+  --card-bg: #0f172a;
 [data-theme="light"] {
   --primary: #2563eb;
   --primary-foreground: #ffffff;
@@ -74,8 +84,8 @@
   }
 
   body {
-    background-color: var(--background);
-    color: #f8fafc;
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
     font-family: Inter, sans-serif;
     overflow-x: hidden;
   }

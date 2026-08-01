@@ -9,6 +9,7 @@ import {
   AdminPasswordResetService,
   InvalidResetTokenError,
 } from '../../services/admin-password-reset.service';
+import { purgeTomlCache } from '../../services/indexer/toml.fetcher';
 
 const router = Router();
 const adminPasswordResetService = new AdminPasswordResetService();
@@ -335,6 +336,56 @@ router.get('/transactions', async (req: Request, res: Response) => {
       status: 'error',
       message: 'Unable to fetch transactions',
     });
+  }
+});
+
+const purgeTomlCacheSchema = z.object({
+  homeDomain: z.string().optional(),
+});
+
+/**
+ * @swagger
+ * /admin/cache/purge-toml:
+ *   post:
+ *     summary: Purge SEP-1 TOML cache
+ *     tags: [Admin]
+ *     requestBody:
+ *       required: false
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               homeDomain:
+ *                 type: string
+ *                 description: Optional specific domain to purge. Omit to purge all entries.
+ *     responses:
+ *       200:
+ *         description: Cache purged successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 purged:
+ *                   type: integer
+ *                   description: Number of cache entries removed
+ */
+router.post('/cache/purge-toml', async (req: Request, res: Response) => {
+  const parsed = purgeTomlCacheSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({
+      status: 'error',
+      message: parsed.error.issues[0]?.message ?? 'Invalid request body',
+    });
+  }
+
+  try {
+    const purged = await purgeTomlCache(parsed.data.homeDomain);
+    res.json({ purged });
+  } catch (error: any) {
+    logger.error('Failed to purge TOML cache', { message: error?.message });
+    res.status(500).json({ error: error.message });
   }
 });
 
