@@ -21,7 +21,8 @@ coverage/
 
 # Environment
 .env
-.env.*.local
+.env.*
+!.env.example
 *.local
 
 # Editor/System

@@ -95,5 +95,6 @@ pub fn update<K>(
     let meta = ContractMetadata { description, icon_url, website };
     env.storage().instance().set(key, &meta);
 
+    #[allow(deprecated)]
     env.events().publish((symbol_short!("meta_upd"),), meta);
 }

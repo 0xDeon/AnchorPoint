@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { sep38Controller } from '../controllers/sep38.controller';
+import { metricsService } from '../../services/metrics.service';
 
 const router = Router();
 
@@ -61,11 +62,16 @@ router.get('/price', async (req: Request, res: Response) => {
  * - context: Optional context for the price request
  */
 router.post('/quote', async (req: Request, res: Response) => {
+  const start = Date.now();
+  let statusLabel = 'success';
   try {
+    metricsService.incrementSep38QuoteRequests('attempted');
+
     const { source_asset, source_amount, destination_asset, context } = req.body;
 
-    // Validate required parameters
     if (!source_asset || !source_amount || !destination_asset) {
+      statusLabel = 'bad_request';
+      metricsService.incrementSep38QuoteRequests('bad_request');
       return res.status(400).json({
         error: 'missing_required_params',
         message: 'Missing required parameters: source_asset, source_amount, destination_asset',
@@ -79,8 +85,11 @@ router.post('/quote', async (req: Request, res: Response) => {
       context,
     );
 
+    metricsService.incrementSep38QuoteRequests('success');
     res.json(priceQuote);
   } catch (error) {
+    statusLabel = 'error';
+    metricsService.incrementSep38QuoteRequests('error');
     if (error instanceof Error) {
       res.status(500).json({
         error: 'internal_server_error',
@@ -92,6 +101,9 @@ router.post('/quote', async (req: Request, res: Response) => {
         message: 'An unexpected error occurred',
       });
     }
+  } finally {
+    const duration = (Date.now() - start) / 1000;
+    metricsService.observeSep38QuoteDuration(statusLabel, duration);
   }
 });
 

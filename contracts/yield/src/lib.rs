@@ -564,4 +564,137 @@ mod tests {
         // Sum of all stakes equals total staked
         assert_eq!(client.stake_of(&alice) + client.stake_of(&bob), client.total_staked());
     }
+
+    #[test]
+    fn test_compound_interest_formula_over_time() {
+        let (env, contract_id, admin, alice, bob, reward_token, _stake_token) = setup();
+        let client = YieldDistributionClient::new(&env, &contract_id);
+
+        // Alice stakes 1_000_000, Bob stakes 1_000_000
+        client.stake(&alice, &1_000_000);
+        client.stake(&bob, &1_000_000);
+
+        // Deposit 10_000 reward tokens — 50/50 split
+        client.deposit_rewards(&admin, &10_000);
+
+        // Each should have 5_000 pending (1_000_000 * 10_000 / 2_000_000)
+        assert_eq!(client.pending_rewards(&alice), 5_000);
+        assert_eq!(client.pending_rewards(&bob), 5_000);
+
+        // Alice claims her rewards
+        let alice_claimed = client.claim(&alice);
+        assert_eq!(alice_claimed, 5_000);
+
+        // Deposit another 10_000 — now total staked is still 2_000_000
+        // Alice's new reward rate: 10_000 * PRECISION / 2_000_000 = 5_000_000_000_000_000
+        // Alice's pending from this deposit: 1_000_000 * 5_000_000_000_000_000 / PRECISION = 5_000
+        // Bob's pending from this deposit: same = 5_000
+        client.deposit_rewards(&admin, &10_000);
+
+        assert_eq!(client.pending_rewards(&alice), 5_000);
+        assert_eq!(client.pending_rewards(&bob), 5_000);
+
+        // Bob claims — should get 5_000 from first deposit + 5_000 from second = 10_000 total
+        let bob_claimed = client.claim(&bob);
+        assert_eq!(bob_claimed, 10_000);
+
+        // Verify token balances
+        let reward_client = TokenClient::new(&env, &reward_token);
+        assert_eq!(reward_client.balance(&alice), 5_000);
+        assert_eq!(reward_client.balance(&bob), 10_000);
+    }
+
+    #[test]
+    fn test_compound_interest_with_multiple_deposits() {
+        let (env, contract_id, admin, alice, _bob, reward_token, _stake_token) = setup();
+        let client = YieldDistributionClient::new(&env, &contract_id);
+
+        // Alice stakes 500_000
+        client.stake(&alice, &500_000);
+
+        // Three separate reward deposits
+        client.deposit_rewards(&admin, &1_000);
+        client.deposit_rewards(&admin, &1_000);
+        client.deposit_rewards(&admin, &1_000);
+
+        // Total rewards = 3_000, Alice is the only staker so she gets all
+        assert_eq!(client.pending_rewards(&alice), 3_000);
+
+        let claimed = client.claim(&alice);
+        assert_eq!(claimed, 3_000);
+
+        let reward_client = TokenClient::new(&env, &reward_token);
+        assert_eq!(reward_client.balance(&alice), 3_000);
+    }
+
+    #[test]
+    fn test_compound_interest_precision_over_time() {
+        let (env, contract_id, admin, alice, bob, reward_token, _stake_token) = setup();
+        let client = YieldDistributionClient::new(&env, &contract_id);
+
+        // Alice stakes 1, Bob stakes 999_999 — very uneven split
+        client.stake(&alice, &1);
+        client.stake(&bob, &999_999);
+
+        // Deposit 1_000_000 reward tokens
+        client.deposit_rewards(&admin, &1_000_000);
+
+        // Alice should get 1 * 1_000_000 / 1_000_000 = 1
+        // Bob should get 999_999 * 1_000_000 / 1_000_000 = 999_999
+        assert_eq!(client.pending_rewards(&alice), 1);
+        assert_eq!(client.pending_rewards(&bob), 999_999);
+
+        // Alice claims her 1 token
+        assert_eq!(client.claim(&alice), 1);
+
+        // Deposit another 1_000_000 — now total staked is still 1_000_000
+        // Alice's reward: 1 * 1_000_000 / 1_000_000 = 1
+        // Bob's reward: 999_999 * 1_000_000 / 1_000_000 = 999_999
+        client.deposit_rewards(&admin, &1_000_000);
+
+        assert_eq!(client.pending_rewards(&alice), 1);
+        assert_eq!(client.pending_rewards(&bob), 999_999);
+
+        let reward_client = TokenClient::new(&env, &reward_token);
+        assert_eq!(reward_client.balance(&alice), 1);
+    }
+
+    #[test]
+    fn test_compound_interest_accrual_after_unstake() {
+        let (env, contract_id, admin, alice, bob, reward_token, _stake_token) = setup();
+        let client = YieldDistributionClient::new(&env, &contract_id);
+
+        // Both stake equally
+        client.stake(&alice, &500_000);
+        client.stake(&bob, &500_000);
+
+        // First reward deposit
+        client.deposit_rewards(&admin, &10_000);
+
+        // Both should have 5_000 pending
+        assert_eq!(client.pending_rewards(&alice), 5_000);
+        assert_eq!(client.pending_rewards(&bob), 5_000);
+
+        // Alice unstakes her full stake
+        client.unstake(&alice, &500_000);
+
+        // Alice's pending should still be 5_000 (accrued but not claimed)
+        assert_eq!(client.pending_rewards(&alice), 5_000);
+
+        // Bob still has 5_000 pending
+        assert_eq!(client.pending_rewards(&bob), 5_000);
+
+        // Second reward deposit — only Bob is staked now
+        client.deposit_rewards(&admin, &10_000);
+
+        // Bob should now have 5_000 + 10_000 = 15_000 pending
+        assert_eq!(client.pending_rewards(&bob), 15_000);
+
+        // Alice's pending should still be 5_000 (she already unstaked)
+        assert_eq!(client.pending_rewards(&alice), 5_000);
+
+        let reward_client = TokenClient::new(&env, &reward_token);
+        assert_eq!(reward_client.balance(&alice), 0);
+        assert_eq!(reward_client.balance(&bob), 0);
+    }
 }

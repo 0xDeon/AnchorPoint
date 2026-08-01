@@ -7,6 +7,7 @@ import { DepositForm } from './DepositForm';
 import { DepositErrorAlert } from './DepositErrorAlert';
 import { InteractiveWebview } from './InteractiveWebview';
 import { AssetDropdown } from './AssetDropdown';
+import { Sep24Wizard } from './Sep24Wizard';
 import type { AssetOption } from './AssetDropdown';
 import type { DepositError } from './DepositErrorAlert';
 import type { UiConfig } from '../types';
@@ -289,12 +290,15 @@ export const SEP24Flow = ({ type, uiConfig }: { type: 'deposit' | 'withdraw'; ui
               Your {flowLabel.toLowerCase()} request has been submitted with {uiConfig.brandName} branding and field
               rules pulled from the backend.
             </p>
-            <button
-              onClick={() => goToStep(1)}
-              className="font-medium text-primary-text hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-text"
-            >
-              Back to Dashboard
-            </button>
+            <div className="space-y-4">
+              <Sep24Wizard type={type} uiConfig={uiConfig} />
+              <button
+                onClick={() => goToStep(1)}
+                className="font-medium text-primary-text hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-text"
+              >
+                Back to Dashboard
+              </button>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
