@@ -23,6 +23,7 @@ import { metricsMiddleware, connectionTracker } from './api/middleware/metrics.m
 import { securityHeadersMiddleware } from './api/middleware/security-headers.middleware';
 import { tracingMiddleware } from './api/middleware/tracing.middleware';
 import configService from './services/config.service';
+import { stellarService } from './services/stellar.service';
 import feeReportRouter from './api/routes/fee-report.route';
 import { feeReportScheduler } from './workers/fee-report.scheduler';
 import eventRouter from './api/routes/event.route';
@@ -110,7 +111,7 @@ app.get('/', (req: Request, res: Response) => {
  * /health:
  *   get:
  *     summary: Health check
- *     description: Check if the API server and its backend dependencies (database, Redis) are running
+ *     description: Check if the API server and its backend dependencies (database, Redis, Soroban RPC) are running
  *     tags: [Health]
  *     responses:
  *       200:
@@ -135,6 +136,9 @@ app.get('/', (req: Request, res: Response) => {
  *                     redis:
  *                       type: string
  *                       example: UP
+ *                     sorobanRpc:
+ *                       type: string
+ *                       example: UP
  *       503:
  *         description: One or more backend dependencies are down
  *         content:
@@ -157,10 +161,14 @@ app.get('/', (req: Request, res: Response) => {
  *                     redis:
  *                       type: string
  *                       example: UP
+ *                     sorobanRpc:
+ *                       type: string
+ *                       example: DOWN
  */
 app.get('/health', async (req: Request, res: Response) => {
   let dbStatus = 'UP';
   let redisStatus = 'UP';
+  let sorobanRpcStatus = 'UP';
   let isHealthy = true;
 
   try {
@@ -183,12 +191,25 @@ app.get('/health', async (req: Request, res: Response) => {
     logger.error('Health Check - Redis connection failed:', err);
   }
 
+  try {
+    const rpcHealth = await stellarService.getHealth();
+    sorobanRpcStatus = rpcHealth.status;
+    if (rpcHealth.status === 'DOWN') {
+      isHealthy = false;
+    }
+  } catch (err) {
+    sorobanRpcStatus = 'DOWN';
+    isHealthy = false;
+    logger.error('Health Check - Soroban RPC connection failed:', err);
+  }
+
   const responsePayload = {
     status: isHealthy ? 'UP' : 'DOWN',
     timestamp: new Date().toISOString(),
     services: {
       database: dbStatus,
       redis: redisStatus,
+      sorobanRpc: sorobanRpcStatus,
     },
   };
 

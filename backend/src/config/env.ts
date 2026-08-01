@@ -14,6 +14,20 @@ const envSchema = z.object({
     .transform((val: string) => parseInt(val, 10))
     .pipe(z.number().positive()),
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required').default('file:./prisma/dev.db'),
+  // PostgreSQL connection pool configuration for production high-concurrency workloads.
+  DB_CONNECTION_LIMIT: z
+    .string()
+    .default('20')
+    .transform((val: string) => parseInt(val, 10))
+    .pipe(z.number().int().min(1).max(100)),
+  DB_POOL_TIMEOUT: z
+    .string()
+    .default('10')
+    .transform((val: string) => parseInt(val, 10))
+    .pipe(z.number().int().min(1).max(60)),
+  // SSL mode for PostgreSQL connections. Defaults to 'disable' for safe local
+  // development. Set to 'require' (or stricter) for production deployments.
+  DB_SSL_MODE: z.enum(['require', 'disable', 'allow', 'prefer', 'verify-ca', 'verify-full']).default('disable'),
   JWT_SECRET: z.string().min(8, 'JWT_SECRET must be at least 8 characters').default('stellar-anchor-secret'),
   SEP24_INTERACTIVE_URL_JWT_SECRET: z
     .string()
