@@ -5,12 +5,15 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 
 void config.JWT_SECRET;
 
+export type Tier = 'Free' | 'Pro' | 'Enterprise';
+
 export interface AuthRequest extends Request {
   user?: {
     publicKey: string;
     signers?: string[];
     threshold?: string;
     authLevel?: 'partial' | 'medium' | 'full';
+    tier?: Tier;
   };
 }
 
@@ -39,7 +42,10 @@ export const authMiddleware = (req: AuthRequest, res: Response, next: NextFuncti
       // Single-key authentication
       req.user = { publicKey: decoded.sub };
     }
-    
+
+    // Attach tier from X-API-Key header if present
+    attachTierFromApiKey(req).catch(() => {});
+
     return next();
   } catch (error) {
     return res.status(401).json({
@@ -48,6 +54,25 @@ export const authMiddleware = (req: AuthRequest, res: Response, next: NextFuncti
     });
   }
 };
+
+async function attachTierFromApiKey(req: AuthRequest): Promise<void> {
+  const apiKeyHeader = req.headers['x-api-key'];
+  if (!apiKeyHeader || typeof apiKeyHeader !== 'string') return;
+
+  try {
+    const { default: prisma } = await import('../../lib/prisma');
+    const record = await prisma.apiKey.findUnique({
+      where: { key: apiKeyHeader },
+      select: { tier: true },
+    });
+
+    if (record && req.user) {
+      req.user.tier = record.tier as Tier;
+    }
+  } catch {
+    // Swallow DB errors — tier is optional metadata
+  }
+}
 
 // Middleware for requiring specific authentication levels
 export const requireAuthLevel = (requiredLevel: 'partial' | 'medium' | 'full') => {
