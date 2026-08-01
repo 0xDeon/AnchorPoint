@@ -187,4 +187,40 @@ mod tests {
         client.unpause_contract(&admin, &target);
         assert_eq!(client.is_contract_paused(&target), false);
     }
+
+    #[test]
+    fn test_is_contract_paused_default_false() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let registry_id = env.register(SecurityRegistry, ());
+        let client = SecurityRegistryClient::new(&env, &registry_id);
+        client.initialize(&admin);
+
+        let some_contract = Address::generate(&env);
+        assert_eq!(client.is_contract_paused(&some_contract), false);
+    }
+
+    #[test]
+    fn test_pause_and_query_specific_contract() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let registry_id = env.register(SecurityRegistry, ());
+        let client = SecurityRegistryClient::new(&env, &registry_id);
+        client.initialize(&admin);
+
+        let target = Address::generate(&env);
+        let other = Address::generate(&env);
+
+        assert_eq!(client.is_contract_paused(&target), false);
+
+        client.pause_contract(&admin, &target);
+        assert_eq!(client.is_contract_paused(&target), true);
+        // Other contract must remain unaffected
+        assert_eq!(client.is_contract_paused(&other), false);
+
+        client.unpause_contract(&admin, &target);
+        assert_eq!(client.is_contract_paused(&target), false);
+    }
 }
