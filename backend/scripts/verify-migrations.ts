@@ -18,6 +18,14 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 
+// Ensure default sqlite path when running in CI/testing
+if (!process.env.DATABASE_URL) {
+  const tmpDir = path.join(__dirname, '..', 'tmp');
+  if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
+  process.env.DATABASE_URL = `file:${path.join(tmpDir, 'test.db')}`;
+  console.log("DATABASE_URL not set; using default:", process.env.DATABASE_URL);
+}
+
 interface MigrationCheckResult {
   success: boolean;
   errors: string[];
