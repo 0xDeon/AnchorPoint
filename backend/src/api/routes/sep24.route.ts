@@ -153,6 +153,18 @@ router.post('/transactions/deposit/interactive', async (req: Request, res: Respo
   }
 
   const transactionId = randomUUID();
+
+  const partnerCallback = on_change_callback || callback;
+  if (partnerCallback) {
+    await Sep24Service.storeCallback(transactionId, {
+      callbackUrl: partnerCallback,
+      kind: 'deposit',
+      assetCode: normalizedAssetCode,
+      amount,
+      account,
+    });
+  }
+
   const response: InteractiveResponse = {
     type: 'interactive_customer_info_needed',
     url: createDepositInteractiveUrl({
@@ -264,6 +276,18 @@ router.post('/transactions/withdraw/interactive', async (req: Request, res: Resp
   }
 
   const transactionId = randomUUID();
+
+  const partnerCallback = on_change_callback || callback;
+  if (partnerCallback) {
+    await Sep24Service.storeCallback(transactionId, {
+      callbackUrl: partnerCallback,
+      kind: 'withdrawal',
+      assetCode: normalizedAssetCode,
+      amount,
+      account,
+    });
+  }
+
   const response: InteractiveResponse = {
     type: 'interactive_customer_info_needed',
     url: createWithdrawInteractiveUrl({
@@ -356,6 +380,100 @@ router.get('/transaction', async (req: Request, res: Response) => {
   } catch (error) {
     return res.status(500).json({ error: 'Failed to fetch transaction' });
   }
+});
+
+/**
+ * @swagger
+ * /sep24/transactions/{id}/status:
+ *   patch:
+ *     summary: Update SEP-24 transaction status and notify partner webhook
+ *     description: >
+ *       Updates deposit/withdrawal status and emits an idempotent partner webhook
+ *       (Idempotency-Key header, Redis delivery-hash dedupe, retry queue).
+ *     tags: [SEP-24]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [status]
+ *             properties:
+ *               status:
+ *                 type: string
+ *               previous_status:
+ *                 type: string
+ *               callback:
+ *                 type: string
+ *                 description: Optional override callback URL when not stored at interactive start
+ *     responses:
+ *       200:
+ *         description: Status updated and webhook handled
+ *       400:
+ *         description: Invalid request
+ *       404:
+ *         description: Transaction / callback not found
+ */
+router.patch('/transactions/:id/status', async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { status, previous_status, callback: callbackOverride } = req.body as {
+    status?: string;
+    previous_status?: string;
+    callback?: string;
+  };
+
+  if (!status || typeof status !== 'string') {
+    return res.status(400).json({ error: 'status is required' });
+  }
+
+  const stored = await Sep24Service.getCallback(id);
+  const callbackUrl = (typeof callbackOverride === 'string' && isValidCallbackUrl(callbackOverride)
+    ? callbackOverride
+    : stored?.callbackUrl) ?? null;
+
+  if (!callbackUrl) {
+    return res.status(404).json({
+      error: 'No partner callback configured for this transaction',
+    });
+  }
+
+  const previousStatus = previous_status ?? 'pending_user';
+  const kind = stored?.kind ?? 'deposit';
+
+  let updatedTransaction = null;
+  try {
+    updatedTransaction = await prisma.transaction.update({
+      where: { id },
+      data: { status: status.toUpperCase() },
+    });
+  } catch {
+    // Transaction may not exist yet (interactive-only flow); still notify partner.
+  }
+
+  const webhookDelivery = await Sep24Service.notifyStatusChange({
+    transactionId: id,
+    kind,
+    previousStatus,
+    nextStatus: status,
+    callbackUrl,
+    amount: stored?.amount ?? updatedTransaction?.amount,
+    assetCode: stored?.assetCode ?? updatedTransaction?.assetCode,
+    stellarTransactionId: updatedTransaction?.stellarTxId ?? undefined,
+    externalTransactionId: updatedTransaction?.externalId ?? undefined,
+  });
+
+  return res.json({
+    id,
+    status,
+    previous_status: previousStatus,
+    webhook: webhookDelivery,
+  });
 });
 
 export default router;

@@ -22,14 +22,16 @@ import authRouter from './api/routes/auth.route';
 import { errorHandler } from './api/middleware/error.middleware';
 import { metricsMiddleware, connectionTracker } from './api/middleware/metrics.middleware';
 import { securityHeadersMiddleware } from './api/middleware/security-headers.middleware';
+import { tracingMiddleware } from './api/middleware/tracing.middleware';
 import configService from './services/config.service';
+import { stellarService } from './services/stellar.service';
 import feeReportRouter from './api/routes/fee-report.route';
 import { feeReportScheduler } from './workers/fee-report.scheduler';
 import eventRouter from './api/routes/event.route';
 import notificationsRouter from './api/routes/notifications.route';
 import { publicLimiter, authLimiter } from './api/middleware/rate-limit.middleware';
 import { notificationService } from './services/notification.service';
-import { createEmailProvider, ConsoleSmsProvider, ConsolePushProvider } from './lib/notifications/providers';
+import { createEmailProvider, ConsoleSmsProvider, FcmPushProvider } from './lib/notifications/providers';
 import { NotificationType } from './services/notification.service';
 import { validateKmsConfigOnStartup } from './lib/key-management.service';
 import queueDashboardRouter from './api/routes/queue-dashboard.route';
@@ -38,16 +40,62 @@ import { redis } from './lib/redis';
 import { validateStorageConfigOnStartup } from './services/storage-provider.service';
 import { uploadExpiryScheduler } from './workers/upload-expiry.scheduler';
 import { initSocket } from './lib/socket';
+import { kycExpiryScheduler } from './workers/kyc-expiry.scheduler';
+
+let server: ReturnType<typeof app.listen> | null = null;
+
+function gracefulShutdown(signal: string): void {
+  logger.info(`${signal} received, initiating graceful shutdown`);
+
+  if (feeReportScheduler) {
+    feeReportScheduler.stop();
+  }
+
+  if (uploadExpiryScheduler) {
+    uploadExpiryScheduler.stop();
+  }
+
+  if (server) {
+    server.close(() => {
+      logger.info('HTTP server closed');
+    });
+  }
+
+  prisma.$disconnect()
+    .then(() => {
+      logger.info('Prisma client disconnected');
+    })
+    .catch((err) => {
+      logger.error('Error disconnecting Prisma client:', err);
+    });
+
+  redis.quit()
+    .then(() => {
+      logger.info('Redis connection closed');
+    })
+    .catch((err) => {
+      logger.error('Error closing Redis connection:', err);
+    });
+
+  setTimeout(() => {
+    logger.error('Graceful shutdown timed out, forcing exit');
+    process.exit(1);
+  }, 30000);
+}
+
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 
 // Initialize Notification Engine
 notificationService.registerProvider(NotificationType.EMAIL, createEmailProvider());
 notificationService.registerProvider(NotificationType.SMS, new ConsoleSmsProvider());
-notificationService.registerProvider(NotificationType.PUSH, new ConsolePushProvider());
+notificationService.registerProvider(NotificationType.PUSH, new FcmPushProvider());
 
 const app = express();
 const httpServer = http.createServer(app);
 app.disable('x-powered-by');
 app.use(securityHeadersMiddleware);
+app.use(tracingMiddleware);
 const PORT = config.PORT;
 
 const configuredOrigins = process.env.PRODUCTION_CORS_ORIGINS ?? '';
@@ -110,7 +158,7 @@ app.get('/', (req: Request, res: Response) => {
  * /health:
  *   get:
  *     summary: Health check
- *     description: Check if the API server and its backend dependencies (database, Redis) are running
+ *     description: Check if the API server and its backend dependencies (database, Redis, Soroban RPC) are running
  *     tags: [Health]
  *     responses:
  *       200:
@@ -135,6 +183,9 @@ app.get('/', (req: Request, res: Response) => {
  *                     redis:
  *                       type: string
  *                       example: UP
+ *                     sorobanRpc:
+ *                       type: string
+ *                       example: UP
  *       503:
  *         description: One or more backend dependencies are down
  *         content:
@@ -157,10 +208,14 @@ app.get('/', (req: Request, res: Response) => {
  *                     redis:
  *                       type: string
  *                       example: UP
+ *                     sorobanRpc:
+ *                       type: string
+ *                       example: DOWN
  */
 app.get('/health', async (req: Request, res: Response) => {
   let dbStatus = 'UP';
   let redisStatus = 'UP';
+  let sorobanRpcStatus = 'UP';
   let isHealthy = true;
 
   try {
@@ -183,12 +238,25 @@ app.get('/health', async (req: Request, res: Response) => {
     logger.error('Health Check - Redis connection failed:', err);
   }
 
+  try {
+    const rpcHealth = await stellarService.getHealth();
+    sorobanRpcStatus = rpcHealth.status;
+    if (rpcHealth.status === 'DOWN') {
+      isHealthy = false;
+    }
+  } catch (err) {
+    sorobanRpcStatus = 'DOWN';
+    isHealthy = false;
+    logger.error('Health Check - Soroban RPC connection failed:', err);
+  }
+
   const responsePayload = {
     status: isHealthy ? 'UP' : 'DOWN',
     timestamp: new Date().toISOString(),
     services: {
       database: dbStatus,
       redis: redisStatus,
+      sorobanRpc: sorobanRpcStatus,
     },
   };
 
@@ -284,10 +352,12 @@ if (process.env.NODE_ENV !== 'test') {
     .finally(() => {
       initSocket(httpServer);
       httpServer.listen(PORT, () => {
+      server = app.listen(PORT, () => {
         logger.info(`Backend service listening at http://localhost:${PORT}`);
         logger.info(`API Documentation available at http://localhost:${PORT}/api-docs`);
         feeReportScheduler.start();
         uploadExpiryScheduler.start();
+        kycExpiryScheduler.start();
       });
     });
 }

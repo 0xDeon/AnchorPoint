@@ -15,6 +15,7 @@
     "test:e2e": "cypress run"
   },
   "dependencies": {
+    "@hookform/resolvers": "^5.5.7",
     "@stellar/stellar-sdk": "^14.6.1",
     "axios": "^1.13.6",
     "clsx": "^2.1.1",
@@ -22,7 +23,11 @@
     "lucide-react": "^0.446.0",
     "react": "^19.2.7",
     "react-dom": "^18.3.1",
-    "tailwind-merge": "^3.6.0"
+    "react-hook-form": "^7.83.0",
+    "react-is": "^19.2.8",
+    "recharts": "^3.10.1",
+    "tailwind-merge": "^3.6.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@chromatic-com/storybook": "^3.2.2",
