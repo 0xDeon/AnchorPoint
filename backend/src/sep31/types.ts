@@ -35,6 +35,17 @@ export interface Sep31TransactionRequest {
   lang?: string;
 }
 
+// ─── Fee Breakdown ─────────────────────────────────────────────────────────
+
+export interface FeeBreakdownItem {
+  /** Human-readable name of the fee component (e.g. "processing", "fixed"). */
+  name: string;
+  /** The fee amount in the anchor's asset unit. */
+  amount: string;
+  /** Optional description explaining what this fee covers. */
+  description?: string;
+}
+
 // ─── POST /transactions — Success Response ─────────────────────────────────
 
 export interface Sep31TransactionResponse {
@@ -46,6 +57,12 @@ export interface Sep31TransactionResponse {
   stellar_memo: string;
   /** Memo type: "text" | "id" | "hash". */
   stellar_memo_type: "text" | "id" | "hash";
+  /** Amount the receiver will get after fee deductions. */
+  amount_out: string;
+  /** Total fee deducted from the payment. */
+  amount_fee: string;
+  /** Transparent breakdown of all deducted fees. */
+  fee_breakdown: FeeBreakdownItem[];
 }
 
 // ─── GET /transaction/:id — Transaction Detail ─────────────────────────────
@@ -112,6 +129,29 @@ export interface Sep31InfoResponse {
   receive: {
     [assetCode: string]: Sep31AssetInfo;
   };
+}
+
+// ─── SEP-31 Dynamic Configuration (driven by SystemConfig) ────────────────
+
+/**
+ * Shape of the SEP-31 configuration as stored in the dynamic SystemConfig.
+ * Each supported asset is a key in the `assets` record.
+ */
+export interface Sep31Config {
+  assets: Record<
+    string,
+    {
+      enabled: boolean;
+      min_amount: number;
+      max_amount: number;
+      fee_fixed: number;
+      fee_percent: number;
+      quotes_supported: boolean;
+      quotes_required: boolean;
+      sender_sep12_type: string;
+      receiver_sep12_type: string;
+    }
+  >;
 }
 
 // ─── SEP-31 Error codes (spec §4.3) ──────────────────────────────────────
