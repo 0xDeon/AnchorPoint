@@ -1,4 +1,4 @@
-import React, { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
+import React, { lazy, Suspense, useCallback, useEffect, useMemo, useState, createContext, useContext } from 'react';
 import {
   LayoutDashboard,
   ArrowUpRight,
@@ -13,16 +13,32 @@ import {
   Bell,
   RefreshCcw,
   Activity,
+  Sun,
+  Moon,
+  TerminalSquare,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { UiConfig } from './types';
 import { Sidebar } from './components/Sidebar';
 import { NotificationBell } from './components/NotificationBell';
+import { StatusBanner } from './components/StatusBanner';
 import { UserAvatarDropdown } from './components/UserAvatarDropdown';
 import { CopyablePublicKey } from './components/CopyablePublicKey';
 import { WalletModal } from './components/WalletModal';
+import { NetworkSelector } from './components/NetworkSelector';
+import { SessionTimeoutModal } from './components/Auth/SessionTimeoutModal';
 import { FreighterAdapter } from './lib/wallet/FreighterAdapter';
 import { I18nProvider, useTranslation } from './i18n/config';
+
+const ThemeContext = createContext<{
+  theme: 'light' | 'dark';
+  toggleTheme: () => void;
+}>({
+  theme: 'dark',
+  toggleTheme: () => {},
+});
+
+export const useTheme = () => useContext(ThemeContext);
 
 const DashboardOverview = lazy(() => import('./components/DashboardOverview'));
 const TransactionHistory = lazy(() => import('./components/TransactionHistory'));
@@ -33,6 +49,7 @@ const NotificationPreferences = lazy(() => import('./components/NotificationPref
 const Sep38QuotePanel = lazy(() => import('./components/Sep38QuotePanel'));
 const ServiceStatusPanel = lazy(() => import('./components/ServiceStatusPanel'));
 const SettingsView = lazy(() => import('./components/SettingsView'));
+const ContractPlayground = lazy(() => import('./components/ContractPlayground'));
 
 const defaultUiConfig: UiConfig = {
   brandName: 'AnchorPoint',
@@ -141,8 +158,21 @@ const App = () => {
   const [walletError, setWalletError] = useState('');
   const [walletModalOpen, setWalletModalOpen] = useState(false);
   const [walletSessionResetCounter, setWalletSessionResetCounter] = useState(0);
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    const stored = localStorage.getItem('theme');
+    if (stored === 'light' || stored === 'dark') return stored;
+    return 'dark';
+  });
   const walletAdapter = useMemo(() => new FreighterAdapter(), []);
   const { t, language, changeLanguage } = useTranslation();
+
+  const toggleTheme = useCallback(() => {
+    setTheme((prev) => {
+      const next = prev === 'dark' ? 'light' : 'dark';
+      localStorage.setItem('theme', next);
+      return next;
+    });
+  }, []);
 
   const clearClientSessionState = useCallback(() => {
     const shouldClearKey = (key: string) => /token|session|wallet|transaction|balance/i.test(key);
@@ -234,6 +264,12 @@ const App = () => {
     };
   }, []);
 
+  useEffect(() => {
+    const root = document.documentElement;
+    root.classList.remove('light', 'dark');
+    root.classList.add(theme);
+  }, [theme]);
+
   const menuItems = useMemo(
     () => [
       { id: 'dashboard', icon: LayoutDashboard, label: t('nav.overview') },
@@ -243,6 +279,7 @@ const App = () => {
       { id: 'sep38', icon: RefreshCcw, label: t('nav.sep38') },
       { id: 'status', icon: Activity, label: t('nav.status') },
       { id: 'notifications', icon: Bell, label: t('nav.notifications') },
+      { id: 'contract-playground', icon: TerminalSquare, label: 'Contract Playground' },
       { id: 'kyc', icon: ShieldCheck, label: t('nav.kyc') },
       { id: 'settings', icon: Settings, label: t('nav.settings') },
     ],
@@ -276,6 +313,7 @@ const App = () => {
   };
 
   return (
+    <ThemeContext.Provider value={{ theme, toggleTheme }}>
     <I18nProvider>
     <div
       className="min-h-screen flex"
@@ -309,6 +347,8 @@ const App = () => {
           <span>{walletStatus === 'connecting' ? 'Connecting…' : 'Select a provider to continue'}</span>
         </div>
       </WalletModal>
+
+      <SessionTimeoutModal />
 
       <main className="flex min-w-0 flex-1 flex-col">
         <header className="sticky top-0 z-30 flex min-h-16 items-center justify-between gap-3 border-b border-slate-800 bg-background/80 px-3 py-3 backdrop-blur-md sm:px-6 lg:px-8">
@@ -348,6 +388,7 @@ const App = () => {
               apiBaseUrl={apiBaseUrl}
               onViewAll={() => setActiveTab('notifications')}
             />
+            <ThemeToggle />
             <div className="flex min-w-0 items-center gap-2">
               {wallet ? (
                 <div className="flex items-center gap-2">
@@ -375,23 +416,24 @@ const App = () => {
                 </span>
               ) : null}
             </div>
-            <select
-              aria-label={t('language.label')}
-              value={language}
-              onChange={(event) => changeLanguage(event.target.value as 'en' | 'es' | 'pt')}
-              className="rounded-lg border border-slate-700 bg-slate-900 px-2 py-2 text-sm text-slate-200"
-            >
-              <option value="en">{t('language.en')}</option>
-              <option value="es">{t('language.es')}</option>
-              <option value="pt">{t('language.pt')}</option>
-            </select>
-            <UserAvatarDropdown
-              onSettings={() => setActiveTab('settings')}
-              onNotifications={() => setActiveTab('notifications')}
-              onSignOut={() => {
-                void handleWalletDisconnect();
-              }}
-            />
+              <select
+                aria-label={t('language.label')}
+                value={language}
+                onChange={(event) => changeLanguage(event.target.value as 'en' | 'es' | 'pt')}
+                className="rounded-lg border border-slate-700 bg-slate-900 px-2 py-2 text-sm text-slate-200"
+              >
+                <option value="en">{t('language.en')}</option>
+                <option value="es">{t('language.es')}</option>
+                <option value="pt">{t('language.pt')}</option>
+              </select>
+              <NetworkSelector apiBaseUrl={apiBaseUrl} />
+              <UserAvatarDropdown
+                onSettings={() => setActiveTab('settings')}
+                onNotifications={() => setActiveTab('notifications')}
+                onSignOut={() => {
+                  void handleWalletDisconnect();
+                }}
+              />
           </div>
         </header>
 
@@ -430,6 +472,8 @@ const App = () => {
             ) : null}
           </div>
 
+          <StatusBanner apiBaseUrl={apiBaseUrl} />
+
           <AnimatePresence mode="wait">
             <motion.div
               data-testid="active-view"
@@ -467,12 +511,31 @@ const App = () => {
                 {activeTab === 'settings' && (
                   <SettingsView uiConfig={uiConfig} apiBaseUrl={apiBaseUrl} />
                 )}
+                {activeTab === 'contract-playground' && <ContractPlayground apiBaseUrl={apiBaseUrl} />}
               </Suspense>
             </motion.div>
           </AnimatePresence>
         </section>
       </main>
     </div>
+    </ThemeContext.Provider>
+  );
+};
+
+const ThemeToggle = () => {
+  const { theme, toggleTheme } = useTheme();
+
+  return (
+    <button
+      type="button"
+      onClick={toggleTheme}
+      aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`}
+      className="flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-300 transition-all hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+    >
+      {theme === 'dark' ? <Sun size={16} aria-hidden="true" /> : <Moon size={16} aria-hidden="true" />}
+      <span className="hidden sm:inline">{theme === 'dark' ? 'Light' : 'Dark'}</span>
+    </button>
+    </I18nProvider>
   );
 };
 

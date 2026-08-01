@@ -598,15 +598,23 @@ export function validateKmsConfigOnStartup(envConfig: {
   VAULT_ADDR?: string;
   VAULT_TOKEN?: string;
   VAULT_TRANSIT_PATH?: string;
+  NODE_ENV?: string;
 }): void {
   const backend = envConfig.KEY_MANAGEMENT_BACKEND ?? 'aws-kms';
+  const isDev = (envConfig.NODE_ENV ?? process.env.NODE_ENV) === 'development';
 
   if (backend === 'aws-kms') {
     if (!envConfig.AWS_KMS_KEY_ARN) {
-      logger.warn('KMS startup validation: KEY_MANAGEMENT_BACKEND=aws-kms but AWS_KMS_KEY_ARN is not set — key encryption/decryption unavailable', {
-        backend,
-        missingVars: ['AWS_KMS_KEY_ARN'],
-      });
+      if (isDev) {
+        logger.info('KMS startup validation: development mode — falling back to plaintext env secrets (AWS_KMS_KEY_ARN unset)', {
+          backend,
+        });
+      } else {
+        logger.warn('KMS startup validation: KEY_MANAGEMENT_BACKEND=aws-kms but AWS_KMS_KEY_ARN is not set — key encryption/decryption unavailable', {
+          backend,
+          missingVars: ['AWS_KMS_KEY_ARN'],
+        });
+      }
     } else {
       const maskedArn = envConfig.AWS_KMS_KEY_ARN.replace(/(?<=.{20}).+(?=.{6})/, '***');
       logger.info('KMS startup validation: AWS KMS configuration present', {
@@ -625,10 +633,17 @@ export function validateKmsConfigOnStartup(envConfig: {
     if (!envConfig.VAULT_TRANSIT_PATH) missingVars.push('VAULT_TRANSIT_PATH');
 
     if (missingVars.length > 0) {
-      logger.warn('KMS startup validation: KEY_MANAGEMENT_BACKEND=vault but required vars are missing — key encryption/decryption unavailable', {
-        backend,
-        missingVars,
-      });
+      if (isDev) {
+        logger.info('KMS startup validation: development mode — falling back to plaintext env secrets (Vault config incomplete)', {
+          backend,
+          missingVars,
+        });
+      } else {
+        logger.warn('KMS startup validation: KEY_MANAGEMENT_BACKEND=vault but required vars are missing — key encryption/decryption unavailable', {
+          backend,
+          missingVars,
+        });
+      }
     } else {
       logger.info('KMS startup validation: HashiCorp Vault configuration present', {
         backend,
@@ -679,4 +694,167 @@ export function buildKeyManagementConfigFromEnv(env: {
     token: env.VAULT_TOKEN,
     transitPath: env.VAULT_TRANSIT_PATH,
   };
+}
+
+/**
+ * Prefix used to mark environment values that must be decrypted via KMS/Vault.
+ * Example: DATABASE_URL=kms:BASE64_CIPHERTEXT
+ */
+export const ENCRYPTED_ENV_PREFIX = 'kms:';
+
+/**
+ * Detect whether a config value is an encrypted ciphertext reference.
+ */
+export function isEncryptedEnvValue(value: string | undefined | null): boolean {
+  return typeof value === 'string' && value.startsWith(ENCRYPTED_ENV_PREFIX);
+}
+
+/**
+ * Decrypt a single environment secret via the configured KMS/Vault backend.
+ * Values without the `kms:` prefix are returned unchanged (local plaintext).
+ * In development/test without KMS, `kms:` values fall back to the ciphertext
+ * payload as plaintext so local workflows keep working.
+ */
+export async function decryptEnvSecret(
+  value: string | undefined,
+  options: {
+    nodeEnv?: string;
+    kmsService?: IKeyManagementService | null;
+  } = {}
+): Promise<string | undefined> {
+  if (value === undefined || value === null || value === '') {
+    return value;
+  }
+
+  const nodeEnv = options.nodeEnv ?? process.env.NODE_ENV ?? 'development';
+  const isDev = nodeEnv === 'development' || nodeEnv === 'test';
+
+  if (!isEncryptedEnvValue(value)) {
+    return value;
+  }
+
+  const ciphertext = value.slice(ENCRYPTED_ENV_PREFIX.length);
+  if (!ciphertext) {
+    throw new KeyManagementError(
+      KeyManagementErrorType.INVALID_KEY_FORMAT,
+      'Encrypted env value has empty ciphertext'
+    );
+  }
+
+  let kms = options.kmsService;
+  if (kms === undefined) {
+    try {
+      kms = getKeyManagementService();
+    } catch {
+      kms = null;
+    }
+  }
+
+  if (!kms) {
+    if (isDev) {
+      logger.debug('decryptEnvSecret: KMS unavailable in development — using local fallback value');
+      return ciphertext;
+    }
+    throw new KeyManagementError(
+      KeyManagementErrorType.INVALID_CONFIG,
+      'Cannot decrypt env secret: key management service is not initialized'
+    );
+  }
+
+  return kms.decryptKey({
+    ciphertext,
+    keyVersion: 'env',
+    algorithm: 'AES-256-GCM',
+    timestamp: Date.now(),
+  });
+}
+
+/**
+ * Resolve sensitive config fields that may be KMS-encrypted.
+ */
+export async function resolveSensitiveEnvSecrets(
+  env: Record<string, string | undefined>,
+  secretKeys: string[] = [
+    'DATABASE_URL',
+    'JWT_SECRET',
+    'ANCHOR_SECRET_KEY',
+    'STELLAR_DISTRIBUTION_SECRET',
+    'STELLAR_FEE_BUMP_SECRET',
+    'RELAYER_SECRET_KEY',
+    'WEBHOOK_SECRET',
+    'SIGNING_KEY',
+  ]
+): Promise<Record<string, string | undefined>> {
+  const resolved = { ...env };
+
+  for (const key of secretKeys) {
+    if (isEncryptedEnvValue(resolved[key])) {
+      resolved[key] = await decryptEnvSecret(resolved[key]);
+    }
+  }
+
+  return resolved;
+}
+
+/**
+ * Startup check verifying decryption capability when encrypted secrets are present.
+ */
+export async function verifyDecryptionCapabilityOnStartup(env: {
+  NODE_ENV?: string;
+  DATABASE_URL?: string;
+  JWT_SECRET?: string;
+  ANCHOR_SECRET_KEY?: string;
+  STELLAR_DISTRIBUTION_SECRET?: string;
+  STELLAR_FEE_BUMP_SECRET?: string;
+  RELAYER_SECRET_KEY?: string;
+  WEBHOOK_SECRET?: string;
+  SIGNING_KEY?: string;
+}): Promise<boolean> {
+  const candidates = [
+    env.DATABASE_URL,
+    env.JWT_SECRET,
+    env.ANCHOR_SECRET_KEY,
+    env.STELLAR_DISTRIBUTION_SECRET,
+    env.STELLAR_FEE_BUMP_SECRET,
+    env.RELAYER_SECRET_KEY,
+    env.WEBHOOK_SECRET,
+    env.SIGNING_KEY,
+  ].filter(isEncryptedEnvValue);
+
+  if (candidates.length === 0) {
+    logger.info('KMS decryption capability check: no encrypted env secrets detected');
+    return true;
+  }
+
+  const nodeEnv = env.NODE_ENV ?? process.env.NODE_ENV;
+  const isDev = nodeEnv === 'development' || nodeEnv === 'test';
+
+  try {
+    getKeyManagementService();
+  } catch {
+    if (isDev) {
+      logger.warn('KMS decryption capability check: encrypted secrets present but KMS not initialized — using development fallback', {
+        encryptedSecretCount: candidates.length,
+      });
+      return true;
+    }
+    logger.error('KMS decryption capability check FAILED: encrypted secrets present but key management is not initialized', {
+      encryptedSecretCount: candidates.length,
+    });
+    return false;
+  }
+
+  try {
+    await decryptEnvSecret(candidates[0], { nodeEnv: env.NODE_ENV });
+    logger.info('KMS decryption capability check: decryption succeeded', {
+      encryptedSecretCount: candidates.length,
+    });
+    return true;
+  } catch (error: any) {
+    logger.error('KMS decryption capability check FAILED', {
+      errorType: error?.type,
+      message: error?.message,
+    });
+    return false;
+  }
 }

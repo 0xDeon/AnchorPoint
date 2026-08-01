@@ -6,6 +6,7 @@ description = "Global security registry for AnchorPoint"
 
 [dependencies]
 soroban-sdk = "26.0.1"
+anchorpoint-utils = { package = "anchorpoint-utils", path = "../utils" }
 
 [lib]
 name = "anchorpoint_security_registry"

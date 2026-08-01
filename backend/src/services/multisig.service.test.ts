@@ -408,4 +408,101 @@ describe('MultisigService', () => {
       });
     });
   });
+
+  describe('parseTransactionPayload', () => {
+    const signerA = 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF';
+    const signerB = 'GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB';
+
+    it('parses XDR and reports missing weight relative to account signers', () => {
+      const hintA = Buffer.from([1, 2, 3, 4]);
+      const hintB = Buffer.from([5, 6, 7, 8]);
+
+      const mockKeypairA = {
+        rawPublicKey: () => Buffer.concat([Buffer.alloc(28), hintA]),
+      };
+      const mockKeypairB = {
+        rawPublicKey: () => Buffer.concat([Buffer.alloc(28), hintB]),
+      };
+
+      (StellarSdk.Keypair.fromPublicKey as jest.Mock).mockImplementation((pk: string) => {
+        if (pk === signerA) return mockKeypairA;
+        if (pk === signerB) return mockKeypairB;
+        throw new Error('unknown');
+      });
+
+      const mockTx = {
+        hash: () => Buffer.from('deadbeef', 'hex'),
+        source: signerA,
+        signatures: [
+          {
+            hint: () => hintA,
+            signature: () => Buffer.from('sig'),
+          },
+        ],
+      };
+
+      (StellarSdk.TransactionBuilder.fromXDR as jest.Mock).mockReturnValue(mockTx);
+      (StellarSdk as any).FeeBumpTransaction = class FeeBumpTransaction {};
+      (StellarSdk as any).Networks = { TESTNET: 'Test SDF Network ; September 2015' };
+
+      const result = multisigService.parseTransactionPayload(
+        'AAAAAA==',
+        [
+          { publicKey: signerA, weight: 1 },
+          { publicKey: signerB, weight: 1 },
+        ],
+        2
+      );
+
+      expect(result.hash).toBe('deadbeef');
+      expect(result.collectedWeight).toBe(1);
+      expect(result.requiredThreshold).toBe(2);
+      expect(result.missingWeight).toBe(1);
+      expect(result.thresholdMet).toBe(false);
+      expect(result.signedKeys).toEqual([signerA]);
+      expect(result.missingSigners).toEqual([{ publicKey: signerB, weight: 1 }]);
+      expect(result.signaturesPresent).toHaveLength(1);
+    });
+
+    it('reports thresholdMet when collected weight meets threshold', () => {
+      const hintA = Buffer.from([1, 2, 3, 4]);
+      const mockKeypairA = {
+        rawPublicKey: () => Buffer.concat([Buffer.alloc(28), hintA]),
+      };
+
+      (StellarSdk.Keypair.fromPublicKey as jest.Mock).mockReturnValue(mockKeypairA);
+
+      const mockTx = {
+        hash: () => Buffer.from('cafebabe', 'hex'),
+        source: signerA,
+        signatures: [
+          { hint: () => hintA, signature: () => Buffer.from('sig') },
+        ],
+      };
+
+      (StellarSdk.TransactionBuilder.fromXDR as jest.Mock).mockReturnValue(mockTx);
+      (StellarSdk as any).FeeBumpTransaction = class FeeBumpTransaction {};
+      (StellarSdk as any).Networks = { TESTNET: 'Test SDF Network ; September 2015' };
+
+      const result = multisigService.parseTransactionPayload(
+        'AAAAAA==',
+        [{ publicKey: signerA, weight: 2 }],
+        2
+      );
+
+      expect(result.thresholdMet).toBe(true);
+      expect(result.missingWeight).toBe(0);
+      expect(result.missingSigners).toHaveLength(0);
+    });
+
+    it('rejects invalid XDR', () => {
+      (StellarSdk.TransactionBuilder.fromXDR as jest.Mock).mockImplementation(() => {
+        throw new Error('bad xdr');
+      });
+
+      expect(() =>
+        multisigService.parseTransactionPayload('!!!', [{ publicKey: signerA, weight: 1 }], 1)
+      ).toThrow('Invalid transaction envelope XDR');
+    });
+  });
 });
