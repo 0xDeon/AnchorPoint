@@ -197,6 +197,7 @@ export const QUEUE_NAMES = {
   CONTRACT_INTERACTIONS: 'contract-interactions',
   SETTLEMENTS: 'settlements',
   NOTIFICATIONS: 'notifications',
+  WEBHOOK_DELIVERY: 'webhook-delivery',
   DEAD_LETTER_QUEUE: 'dead-letter-queue',
   FEE_REPORTS: 'fee-reports',
 } as const;
