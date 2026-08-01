@@ -51,43 +51,23 @@ CREATE TABLE "ContractJob" (
     "createdAt" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+-- Note: "User".phone, NotificationPreference, Notification, and ContractJob
+-- were already created by 20260623000000_init_postgres (the canonical baseline).
+-- This migration only adds the UploadRecord table which is new.
 
 -- CreateTable
 CREATE TABLE "UploadRecord" (
-    "id" TEXT NOT NULL PRIMARY KEY,
+    "id" TEXT NOT NULL,
     "key" TEXT NOT NULL,
     "contentType" TEXT NOT NULL,
     "status" TEXT NOT NULL DEFAULT 'PENDING',
     "createdAt" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "UploadRecord_pkey" PRIMARY KEY ("id")
 );
-
--- CreateIndex
-CREATE UNIQUE INDEX "NotificationPreference_userId_key" ON "NotificationPreference"("userId");
-
--- CreateIndex
-CREATE INDEX "NotificationPreference_userId_idx" ON "NotificationPreference"("userId");
-
--- CreateIndex
-CREATE INDEX "Notification_userId_idx" ON "Notification"("userId");
-
--- CreateIndex
-CREATE INDEX "Notification_transactionId_idx" ON "Notification"("transactionId");
-
--- CreateIndex
-CREATE UNIQUE INDEX "ContractJob_jobId_key" ON "ContractJob"("jobId");
-
--- CreateIndex
-CREATE INDEX "ContractJob_jobId_idx" ON "ContractJob"("jobId");
-
--- CreateIndex
-CREATE INDEX "ContractJob_status_idx" ON "ContractJob"("status");
-
--- CreateIndex
-CREATE INDEX "ContractJob_createdBy_idx" ON "ContractJob"("createdBy");
-
--- CreateIndex
-CREATE INDEX "ContractJob_type_idx" ON "ContractJob"("type");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "UploadRecord_key_key" ON "UploadRecord"("key");
