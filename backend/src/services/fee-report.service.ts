@@ -5,6 +5,7 @@ import * as path from 'path';
 import { Queue } from 'bullmq';
 import { defaultQueueOptions, QUEUE_NAMES } from '../config/queue';
 import logger from '../utils/logger';
+import { formatDecimal, toDecimal } from '../utils/decimal';
 
 const prisma = new PrismaClient();
 
@@ -170,8 +171,8 @@ export class FeeReportService {
     };
 
     const feeBreakdown: Record<string, FeeSummary> = {};
-    let totalFees = '0';
-    let totalFeesXLM = '0';
+    let totalFees = formatDecimal(0);
+    let totalFeesXLM = formatDecimal(0);
 
     transactions.forEach((tx) => {
       const opType = tx.type;
@@ -201,10 +202,7 @@ export class FeeReportService {
       const feeInXLM = feeAsset === 'XLM' ? feeAmount : this.estimateXLMValue(feeAmount, feeAsset);
       totalFeesXLM = this.addStrings(totalFeesXLM, feeInXLM);
 
-      // Track total fees in original asset (using first encountered asset as base)
-      if (totalFees === '0' && feeAmount !== '0') {
-        totalFees = feeAmount;
-      }
+      totalFees = this.addStrings(totalFees, feeAmount);
     });
 
     // Calculate average fees
@@ -352,18 +350,18 @@ export class FeeReportService {
    * Helper: Add two string numbers
    */
   private addStrings(a: string, b: string): string {
-    const numA = parseFloat(a) || 0;
-    const numB = parseFloat(b) || 0;
-    return (numA + numB).toString();
+    return formatDecimal(toDecimal(a).plus(toDecimal(b)));
   }
 
   /**
    * Helper: Divide string number by integer
    */
   private divideStrings(a: string, b: string): string {
-    const numA = parseFloat(a) || 0;
-    const numB = parseFloat(b) || 1;
-    return (numA / numB).toFixed(7);
+    const divisor = toDecimal(b);
+    if (divisor.isZero()) {
+      return formatDecimal(0);
+    }
+    return formatDecimal(toDecimal(a).dividedBy(divisor));
   }
 
   /**
