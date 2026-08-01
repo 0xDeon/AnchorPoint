@@ -235,6 +235,7 @@ const dashboardUiSchema = z.object({
   primaryColor: z.string().regex(/^#([0-9a-fA-F]{6})$/, 'Primary color must be a hex value').default('#3b82f6'),
   accentColor: z.string().regex(/^#([0-9a-fA-F]{6})$/, 'Accent color must be a hex value').default('#14b8a6'),
   supportEmail: z.string().email().optional(),
+  bannerMessage: z.string().optional(),
   fieldRequirements: z.object({
     deposit: z.array(uiFieldRequirementSchema).default([]),
     withdraw: z.array(uiFieldRequirementSchema).default([]),
