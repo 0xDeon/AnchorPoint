@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import CircuitBreaker from 'opossum';
 
 import { config } from '../config/env';
 
@@ -6,6 +7,7 @@ export enum KycStatus {
   PENDING = 'PENDING',
   ACCEPTED = 'ACCEPTED',
   REJECTED = 'REJECTED',
+  PENDING_PROVIDER_RETRY = 'PENDING_PROVIDER_RETRY',
 }
 
 export interface KycSubmissionInput {
@@ -320,16 +322,71 @@ class ShuftiKycProvider implements IKycProvider {
   }
 }
 
+class CircuitBreakerKycProvider implements IKycProvider {
+  private provider: IKycProvider;
+  private breaker: CircuitBreaker<[KycSubmissionInput, Record<string, string>], KycSubmissionResult>;
+
+  constructor(provider: IKycProvider) {
+    this.provider = provider;
+
+    const options = {
+      errorThresholdPercentage: 100,
+      volumeThreshold: 5,
+      rollingCountTimeout: 30000,
+      resetTimeout: 30000,
+    };
+
+    this.breaker = new CircuitBreaker(
+      (data, documents) => this.provider.submitCustomer(data, documents),
+      options
+    );
+
+    this.breaker.fallback(() => ({
+      success: false,
+      status: KycStatus.PENDING_PROVIDER_RETRY,
+      message: 'KYC provider is currently unavailable. Will retry later.',
+    }));
+  }
+
+  get providerName(): string {
+    return this.provider.providerName;
+  }
+
+  submitCustomer(
+    data: KycSubmissionInput,
+    documents: Record<string, string>
+  ): Promise<KycSubmissionResult> {
+    return this.breaker.fire(data, documents);
+  }
+
+  verifyWebhookSignature(
+    payload: string,
+    signature: string | undefined,
+    headers?: Record<string, unknown>
+  ): boolean {
+    return this.provider.verifyWebhookSignature(payload, signature, headers);
+  }
+
+  parseWebhook(payload: unknown): KycWebhookResult | null {
+    return this.provider.parseWebhook(payload);
+  }
+}
+
 export const createKycProvider = (provider: string): IKycProvider => {
+  let baseProvider: IKycProvider;
   switch (provider) {
     case 'persona':
-      return new PersonaKycProvider();
+      baseProvider = new PersonaKycProvider();
+      break;
     case 'shufti':
-      return new ShuftiKycProvider();
+      baseProvider = new ShuftiKycProvider();
+      break;
     case 'mock':
     default:
-      return new MockKycProvider();
+      baseProvider = new MockKycProvider();
+      break;
   }
+  return new CircuitBreakerKycProvider(baseProvider);
 };
 
 export const kycProvider = createKycProvider(config.KYC_PROVIDER);

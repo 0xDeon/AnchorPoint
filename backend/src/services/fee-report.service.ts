@@ -2,9 +2,18 @@ import { PrismaClient } from '@prisma/client';
 import PDFDocument from 'pdfkit';
 import * as fs from 'fs';
 import * as path from 'path';
+import { Queue } from 'bullmq';
+import { defaultQueueOptions, QUEUE_NAMES } from '../config/queue';
 import logger from '../utils/logger';
 
 const prisma = new PrismaClient();
+
+export interface FeeReportJobData {
+  reportType: 'DAILY' | 'MONTHLY';
+  date?: string;
+  year?: number;
+  month?: number;
+}
 
 export interface FeeReportData {
   reportType: 'DAILY' | 'MONTHLY';
@@ -37,10 +46,54 @@ export interface OperationCounts {
  */
 export class FeeReportService {
   private reportsDir: string;
+  private feeReportQueue: Queue;
 
   constructor() {
     this.reportsDir = path.join(process.cwd(), 'reports');
     this.ensureReportsDirectory();
+    this.feeReportQueue = new Queue(QUEUE_NAMES.FEE_REPORTS, defaultQueueOptions);
+  }
+
+  /**
+   * Enqueue a daily fee report generation job into BullMQ
+   */
+  async enqueueDailyReportJob(date?: Date) {
+    const targetDateStr = date ? date.toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
+    const jobData: FeeReportJobData = {
+      reportType: 'DAILY',
+      date: date ? date.toISOString() : undefined,
+    };
+    const job = await this.feeReportQueue.add('generate-daily', jobData, {
+      jobId: `daily-report-${targetDateStr}`,
+    });
+    logger.info(`Enqueued daily fee report job: ${job.id}`);
+    return job;
+  }
+
+  /**
+   * Enqueue a monthly fee report generation job into BullMQ
+   */
+  async enqueueMonthlyReportJob(year?: number, month?: number) {
+    const now = new Date();
+    const targetYear = year ?? now.getFullYear();
+    const targetMonth = month ?? now.getMonth();
+    const jobData: FeeReportJobData = {
+      reportType: 'MONTHLY',
+      year: targetYear,
+      month: targetMonth,
+    };
+    const job = await this.feeReportQueue.add('generate-monthly', jobData, {
+      jobId: `monthly-report-${targetYear}-${targetMonth}`,
+    });
+    logger.info(`Enqueued monthly fee report job: ${job.id}`);
+    return job;
+  }
+
+  /**
+   * Close the fee report queue connection gracefully
+   */
+  async closeQueue(): Promise<void> {
+    await this.feeReportQueue.close();
   }
 
   /**
