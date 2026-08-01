@@ -4,6 +4,7 @@
 
 use crate::admin::Admin;
 use crate::rate_limit::{ActionType, RateLimiter, RateLimitError};
+use crate::Error;
 use soroban_sdk::{testutils::Address as _, testutils::Ledger, Address, Env};
 
 #[test]
@@ -123,5 +124,43 @@ fn test_set_fee_cooldown_independent_of_add_asset() {
 
         assert_eq!(RateLimiter::check_and_update(&env, ActionType::AddAsset), Ok(()));
         assert_eq!(RateLimiter::check_and_update(&env, ActionType::SetFee), Ok(()));
+    });
+}
+
+// -------------------------------------------------------------------------
+// Error enum tests (#808)
+// -------------------------------------------------------------------------
+
+#[test]
+fn test_error_codes_are_distinct_u32() {
+    // Each variant must map to a unique non-zero u32.
+    assert_eq!(Error::Unauthorized as u32, 1);
+    assert_eq!(Error::AlreadyInitialized as u32, 2);
+    assert_eq!(Error::InvalidAmount as u32, 3);
+    assert_eq!(Error::InsufficientBalance as u32, 4);
+    assert_eq!(Error::InsufficientAllowance as u32, 5);
+    assert_eq!(Error::SupplyCapExceeded as u32, 6);
+    assert_eq!(Error::ContractPaused as u32, 7);
+    assert_eq!(Error::NotInitialized as u32, 8);
+    assert_eq!(Error::BatchTooLarge as u32, 9);
+    assert_eq!(Error::EmptyBatch as u32, 10);
+}
+
+#[test]
+fn test_admin_rate_limit_returns_error_enum() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+
+    let contract_id = env.register(crate::AnchorPointContract, ());
+    env.as_contract(&contract_id, || {
+        env.ledger().set_timestamp(1000);
+        // First call succeeds → Ok(())
+        assert_eq!(Admin::update_oracle(env.clone(), admin.clone(), 0, 100), Ok(()));
+        // Second call within cooldown → Err(Error::Unauthorized)
+        assert_eq!(
+            Admin::update_oracle(env.clone(), admin.clone(), 0, 200),
+            Err(Error::Unauthorized),
+        );
     });
 }

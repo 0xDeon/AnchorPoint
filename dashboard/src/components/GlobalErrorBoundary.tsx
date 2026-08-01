@@ -1,5 +1,5 @@
 import React, { Component, ReactNode, ErrorInfo } from 'react';
-import { AlertTriangle, RefreshCcw } from 'lucide-react';
+import { AlertTriangle, RefreshCcw, Copy, Check } from 'lucide-react';
 
 interface Props {
   children?: ReactNode;
@@ -8,24 +8,44 @@ interface Props {
 interface State {
   hasError: boolean;
   error: Error | null;
+  errorInfo: ErrorInfo | null;
+  copied: boolean;
 }
 
 export class GlobalErrorBoundary extends Component<Props, State> {
   public state: State = {
     hasError: false,
     error: null,
+    errorInfo: null,
+    copied: false,
   };
 
-  public static getDerivedStateFromError(error: Error): State {
+  public static getDerivedStateFromError(error: Error): Partial<State> {
     return { hasError: true, error };
   }
 
   public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     console.error('Uncaught error:', error, errorInfo);
+    this.setState({ errorInfo });
   }
 
   private handleReload = () => {
     window.location.reload();
+  };
+
+  private handleCopyStackTrace = async () => {
+    const { error, errorInfo } = this.state;
+    const stackTrace = [error?.stack ?? error?.toString(), errorInfo?.componentStack]
+      .filter(Boolean)
+      .join('\n\nComponent Stack:');
+
+    try {
+      await navigator.clipboard.writeText(stackTrace);
+      this.setState({ copied: true });
+      window.setTimeout(() => this.setState({ copied: false }), 2000);
+    } catch {
+      /* clipboard not available */
+    }
   };
 
   public render() {
@@ -52,13 +72,22 @@ export class GlobalErrorBoundary extends Component<Props, State> {
               </div>
             )}
             
-            <button
-              onClick={this.handleReload}
-              className="action-button mt-6 flex items-center justify-center gap-2 bg-blue-600 text-white px-6 py-2.5 rounded-lg font-medium hover:bg-blue-500 hover:shadow-lg hover:shadow-blue-500/20 w-full sm:w-auto border border-blue-500"
-            >
-              <RefreshCcw size={18} />
-              Reload Application
-            </button>
+            <div className="mt-6 flex w-full flex-col gap-3 sm:w-auto sm:flex-row">
+              <button
+                onClick={this.handleReload}
+                className="action-button flex items-center justify-center gap-2 bg-blue-600 text-white px-6 py-2.5 rounded-lg font-medium hover:bg-blue-500 hover:shadow-lg hover:shadow-blue-500/20 w-full sm:w-auto border border-blue-500"
+              >
+                <RefreshCcw size={18} />
+                Reload Application
+              </button>
+              <button
+                onClick={this.handleCopyStackTrace}
+                className="action-button flex items-center justify-center gap-2 bg-slate-800 text-slate-200 px-6 py-2.5 rounded-lg font-medium hover:bg-slate-700 w-full sm:w-auto border border-slate-600"
+              >
+                {this.state.copied ? <Check size={18} className="text-emerald-400" /> : <Copy size={18} />}
+                {this.state.copied ? 'Copied!' : 'Copy Error Details'}
+              </button>
+            </div>
           </div>
         </div>
       );

@@ -3,6 +3,17 @@ import path from "path";
 import { traceContextFormat } from "../tracing/winston-trace.format";
 import { structuredJsonFormat } from "./log-format";
 import { LogstashTransport } from "./logstash.transport";
+import { tracingManager } from "./tracing";
+
+export function correlationIdFormat(): winston.Logform.Format {
+  return winston.format((info) => {
+    const ctx = tracingManager.getCurrentContext();
+    if (ctx?.correlationId) {
+      info["correlationId"] = ctx.correlationId;
+    }
+    return info;
+  })();
+}
 
 // Determine log level from environment
 const getLogLevel = () => {
@@ -20,6 +31,7 @@ const getLogLevel = () => {
 const logFormat = winston.format.combine(
   winston.format.errors({ stack: true }),
   traceContextFormat(),
+  correlationIdFormat(),
   structuredJsonFormat(),
 );
 

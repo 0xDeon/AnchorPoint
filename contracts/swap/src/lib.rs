@@ -2,8 +2,14 @@
 
 use core::cmp;
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, token, Address, Env, Vec,
+    contract, contracterror, contractimpl, contracttype, panic_with_error, symbol_short, token, Address, Env, Vec,
 };
+
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum SwapError {
+    SlippageExceeded = 1,
+}
 
 /// Fetch the decimal precision of a token contract dynamically.
 /// Falls back to 7 (the Stellar native/SAC default) on any error.
@@ -579,7 +585,9 @@ impl MultiAssetSwap {
         // Update tracker with volume and price change
         Self::update_tracker(&env, amount_in, current_sqrt_price_x96);
         // Slippage protection: ensure amount_out meets minimum threshold
-        assert!(amount_out >= min_amount_out, "slippage protection: amount out below minimum");
+        if amount_out < min_amount_out {
+            panic_with_error!(env, SwapError::SlippageExceeded);
+        }
         
         // Update pool state
         env.storage().instance().set(&DataKey::CurrentSqrtPriceX96, &current_sqrt_price_x96);
@@ -1156,5 +1164,26 @@ mod tests {
 
         // Try to set alice as her own referrer - should panic
         client.set_referrer(&alice, &alice);
+    }
+
+    #[test]
+    #[should_panic(expected = "SlippageExceeded")]
+    fn test_swap_slippage_exceeded() {
+        let (env, contract_id, _admin, alice, token_a, _token_b) = setup();
+        let client = MultiAssetSwapClient::new(&env, &contract_id);
+
+        client.mint(&alice, &-60, &60, &10_000, &10_000);
+
+        let sqrt_price_limit = MultiAssetSwap::tick_to_sqrt_price_x96(-1);
+        
+        // This swap will output some tokens, but we specify a very high min_amount_out (50,000)
+        // that cannot be met, causing a SlippageExceeded panic.
+        client.swap(
+            &alice, 
+            &token_a, 
+            &1_000, 
+            &sqrt_price_limit,
+            &50_000
+        );
     }
 }

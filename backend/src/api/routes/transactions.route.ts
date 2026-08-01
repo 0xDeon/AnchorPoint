@@ -5,6 +5,7 @@ import { authMiddleware, AuthRequest } from '../middleware/auth.middleware';
 import { validate } from '../middleware/validate.middleware';
 import { stellarService } from '../../services/stellar.service';
 import { submissionLimiter } from '../middleware/rate-limit.middleware';
+import { emitTxUpdated } from '../../lib/socket';
 
 
 const router = Router();
@@ -270,6 +271,76 @@ router.post('/submit', authMiddleware, submissionLimiter, validate({ body: submi
       status: 'error',
       message: error.message,
     });
+  }
+});
+
+const statusUpdateSchema = z.object({
+  status: z.enum(['PENDING', 'COMPLETED', 'FAILED']),
+});
+
+/**
+ * @swagger
+ * /api/transactions/{id}/status:
+ *   patch:
+ *     summary: Update transaction status
+ *     description: Updates the status of a transaction and emits a real-time WebSocket event.
+ *     tags: [Transactions]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Transaction ID
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - status
+ *             properties:
+ *               status:
+ *                 type: string
+ *                 enum: [PENDING, COMPLETED, FAILED]
+ *     responses:
+ *       200:
+ *         description: Transaction status updated successfully
+ *       401:
+ *         description: Unauthorized
+ *       404:
+ *         description: Transaction not found
+ */
+router.patch('/:id/status', authMiddleware, validate({ body: statusUpdateSchema }), async (req: AuthRequest, res: Response) => {
+  const { id } = req.params;
+  const { status } = req.body as { status: string };
+  const publicKey = req.user!.publicKey;
+
+  try {
+    const user = await prisma.user.findUnique({ where: { publicKey } });
+    if (!user) {
+      return res.status(404).json({ status: 'error', message: 'User not found' });
+    }
+
+    const existing = await prisma.transaction.findFirst({ where: { id, userId: user.id } });
+    if (!existing) {
+      return res.status(404).json({ status: 'error', message: 'Transaction not found' });
+    }
+
+    const tx = await prisma.transaction.update({
+      where: { id },
+      data: { status },
+    });
+
+    emitTxUpdated({ id: tx.id, status: tx.status, assetCode: tx.assetCode, amount: tx.amount, type: tx.type });
+
+    return res.json({ status: 'success', data: tx });
+  } catch (error) {
+    console.error('Error updating transaction status:', error);
+    return res.status(500).json({ status: 'error', message: 'Failed to update transaction status' });
   }
 });
 
