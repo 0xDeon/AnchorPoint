@@ -1,3 +1,4 @@
+import http from 'http';
 import express, { Request, Response } from 'express';
 import cors from 'cors';
 import swaggerUi from 'swagger-ui-express';
@@ -38,6 +39,7 @@ import prisma from './lib/prisma';
 import { redis } from './lib/redis';
 import { validateStorageConfigOnStartup } from './services/storage-provider.service';
 import { uploadExpiryScheduler } from './workers/upload-expiry.scheduler';
+import { initSocket } from './lib/socket';
 import { kycExpiryScheduler } from './workers/kyc-expiry.scheduler';
 
 let server: ReturnType<typeof app.listen> | null = null;
@@ -90,6 +92,7 @@ notificationService.registerProvider(NotificationType.SMS, new ConsoleSmsProvide
 notificationService.registerProvider(NotificationType.PUSH, new FcmPushProvider());
 
 const app = express();
+const httpServer = http.createServer(app);
 app.disable('x-powered-by');
 app.use(securityHeadersMiddleware);
 app.use(tracingMiddleware);
@@ -347,6 +350,8 @@ if (process.env.NODE_ENV !== 'test') {
       logger.error('Failed to initialize config service:', error);
     })
     .finally(() => {
+      initSocket(httpServer);
+      httpServer.listen(PORT, () => {
       server = app.listen(PORT, () => {
         logger.info(`Backend service listening at http://localhost:${PORT}`);
         logger.info(`API Documentation available at http://localhost:${PORT}/api-docs`);

@@ -30,6 +30,7 @@
     "migrate:verify": "ts-node scripts/verify-migrations.ts",
     "migrate:check": "ts-node scripts/migration-integrity-checker.ts",
     "migrate:rollback": "ts-node scripts/generate-rollback.ts",
+    "migrate:rollback:verify": "ts-node scripts/rollback.ts",
     "migrate:status": "prisma migrate status",
     "migrate:validate-env": "node scripts/validate-migration-env.js",
     "migrate:bootstrap": "bash scripts/bootstrap-db.sh",
@@ -77,6 +78,7 @@
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui-express": "^5.0.1",
     "uuid": "^9.0.0",
+    "socket.io": "^4.8.1",
     "vite": "^6.4.3",
     "winston": "^3.19.0",
     "zod": "^4.3.6"

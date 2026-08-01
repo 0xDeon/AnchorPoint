@@ -435,8 +435,10 @@ model UploadRecord {
   key         String   @unique
   contentType String
   status      String   @default("PENDING")
+  isTemporary Boolean  @default(true)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   @@index([status])
+  @@index([isTemporary, status, createdAt])
 }
