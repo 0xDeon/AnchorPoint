@@ -185,9 +185,9 @@ const envSchema = z.object({
     .default('30')
     .transform((val: string) => parseInt(val, 10))
     .pipe(z.number().int().min(0).max(300)),
-  SEP38_ASSETS_CACHE_TTL_SECONDS: z
+  UPLOAD_URL_EXPIRY_SECONDS: z
     .string()
-    .default('3600')
+    .default('900')
     .transform((val: string) => parseInt(val, 10))
     .pipe(z.number().int().min(60).max(86400)),
 }).superRefine((data, ctx) => {

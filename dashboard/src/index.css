@@ -19,6 +19,23 @@
   --scrollbar-thumb-active: #cbd5e1;
 }
 
+[data-theme="light"] {
+  --primary: #2563eb;
+  --primary-foreground: #ffffff;
+  --primary-text: #1d4ed8;
+  --background: #f8fafc;
+  --card: #ffffff;
+  --accent: #7c3aed;
+  --accent-text: #065f46;
+  --slate-400: #64748b;
+  --slate-500: #475569;
+  --slate-600: #334155;
+  --scrollbar-track: #e2e8f0;
+  --scrollbar-thumb: #94a3b8;
+  --scrollbar-thumb-hover: #64748b;
+  --scrollbar-thumb-active: #475569;
+}
+
 @layer base {
   html {
     @apply overflow-x-hidden;
@@ -63,6 +80,10 @@
     overflow-x: hidden;
   }
 
+  [data-theme="light"] body {
+    color: #0f172a;
+  }
+
   @media (forced-colors: active) {
     * {
       scrollbar-color: auto;
@@ -75,6 +96,10 @@
     @apply bg-slate-900/50 backdrop-blur-md border border-slate-500 rounded-xl overflow-hidden;
   }
 
+  [data-theme="light"] .glass-card {
+    @apply bg-white/80 backdrop-blur-md border border-slate-200;
+  }
+
   .btn-primary {
     @apply bg-primary text-primary-foreground px-4 py-2 rounded-lg font-medium transition-all hover:brightness-110 active:scale-95;
   }
@@ -85,6 +110,10 @@
 
   .input-field {
     @apply bg-slate-900 border border-slate-600 text-slate-100 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary-text transition-all;
+  }
+
+  [data-theme="light"] .input-field {
+    @apply bg-white border border-slate-300 text-slate-900 focus:ring-primary;
   }
 }
 
