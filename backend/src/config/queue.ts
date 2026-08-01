@@ -198,6 +198,7 @@ export const QUEUE_NAMES = {
   SETTLEMENTS: 'settlements',
   NOTIFICATIONS: 'notifications',
   DEAD_LETTER_QUEUE: 'dead-letter-queue',
+  FEE_REPORTS: 'fee-reports',
 } as const;
 
 export type QueueName = typeof QUEUE_NAMES[keyof typeof QUEUE_NAMES];
