@@ -13,11 +13,13 @@ import {
   Bell,
   RefreshCcw,
   Activity,
+  TerminalSquare,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { UiConfig } from './types';
 import { Sidebar } from './components/Sidebar';
 import { NotificationBell } from './components/NotificationBell';
+import { StatusBanner } from './components/StatusBanner';
 import { UserAvatarDropdown } from './components/UserAvatarDropdown';
 import { CopyablePublicKey } from './components/CopyablePublicKey';
 import { WalletModal } from './components/WalletModal';
@@ -35,6 +37,7 @@ const NotificationPreferences = lazy(() => import('./components/NotificationPref
 const Sep38QuotePanel = lazy(() => import('./components/Sep38QuotePanel'));
 const ServiceStatusPanel = lazy(() => import('./components/ServiceStatusPanel'));
 const SettingsView = lazy(() => import('./components/SettingsView'));
+const ContractPlayground = lazy(() => import('./components/ContractPlayground'));
 
 const defaultUiConfig: UiConfig = {
   brandName: 'AnchorPoint',
@@ -245,6 +248,7 @@ const App = () => {
       { id: 'sep38', icon: RefreshCcw, label: t('nav.sep38') },
       { id: 'status', icon: Activity, label: t('nav.status') },
       { id: 'notifications', icon: Bell, label: t('nav.notifications') },
+      { id: 'contract-playground', icon: TerminalSquare, label: 'Contract Playground' },
       { id: 'kyc', icon: ShieldCheck, label: t('nav.kyc') },
       { id: 'settings', icon: Settings, label: t('nav.settings') },
     ],
@@ -435,6 +439,8 @@ const App = () => {
             ) : null}
           </div>
 
+          <StatusBanner apiBaseUrl={apiBaseUrl} />
+
           <AnimatePresence mode="wait">
             <motion.div
               data-testid="active-view"
@@ -472,6 +478,7 @@ const App = () => {
                 {activeTab === 'settings' && (
                   <SettingsView uiConfig={uiConfig} apiBaseUrl={apiBaseUrl} />
                 )}
+                {activeTab === 'contract-playground' && <ContractPlayground apiBaseUrl={apiBaseUrl} />}
               </Suspense>
             </motion.div>
           </AnimatePresence>

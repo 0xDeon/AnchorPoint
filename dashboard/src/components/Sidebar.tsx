@@ -1,4 +1,6 @@
 import { AnimatePresence, motion } from 'framer-motion';
+import { Sun, Moon, X } from 'lucide-react';
+import { useState, useEffect } from 'react';
 import type { ComponentType } from 'react';
 import type { UiConfig } from '../types';
 import { LogoMark } from './LogoMark';
@@ -18,6 +20,36 @@ type SidebarProps = {
   onClose: () => void;
   onSelect: (tabId: string) => void;
 };
+
+function ThemeToggle() {
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+    if (typeof document !== 'undefined') {
+      const stored = document.documentElement.getAttribute('data-theme');
+      if (stored === 'light') return 'light';
+    }
+    return 'dark';
+  });
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+  }, [theme]);
+
+  const toggle = () => {
+    setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={toggle}
+      aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`}
+      className="flex w-full items-center gap-3 rounded-lg px-4 py-3 text-slate-400 transition-all hover:bg-slate-900 hover:text-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-text"
+    >
+      {theme === 'dark' ? <Moon size={20} aria-hidden="true" /> : <Sun size={20} aria-hidden="true" />}
+      <span className="font-medium">{theme === 'dark' ? 'Dark' : 'Light'} Mode</span>
+    </button>
+  );
+}
 
 export const Sidebar = ({
   activeTab,
@@ -103,6 +135,9 @@ export const Sidebar = ({
                   : 'Loading config'}
             </p>
           </div>
+        </div>
+        <div className="mt-4">
+          <ThemeToggle />
         </div>
       </div>
     </motion.aside>

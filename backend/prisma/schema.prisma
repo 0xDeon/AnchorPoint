@@ -6,7 +6,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -216,6 +216,7 @@ enum KYCStatus {
   PENDING
   ACCEPTED
   REJECTED
+  KYC_EXPIRING_SOON
 }
 
 model KycCustomer {
@@ -228,6 +229,7 @@ model KycCustomer {
   lastName    String?
   email       String?
   status      KYCStatus @default(PENDING)
+  expiresAt   DateTime?
   extraFields Json?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -426,4 +428,15 @@ model CrawlJobRecord {
   compliantCount    Int
   nonCompliantCount Int
   suspiciousCount   Int
+}
+
+model UploadRecord {
+  id          String   @id @default(uuid())
+  key         String   @unique
+  contentType String
+  status      String   @default("PENDING")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([status])
 }
