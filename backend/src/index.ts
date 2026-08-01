@@ -21,6 +21,7 @@ import authRouter from './api/routes/auth.route';
 import { errorHandler } from './api/middleware/error.middleware';
 import { metricsMiddleware, connectionTracker } from './api/middleware/metrics.middleware';
 import { securityHeadersMiddleware } from './api/middleware/security-headers.middleware';
+import { tracingMiddleware } from './api/middleware/tracing.middleware';
 import configService from './services/config.service';
 import { stellarService } from './services/stellar.service';
 import feeReportRouter from './api/routes/fee-report.route';
@@ -37,6 +38,7 @@ import prisma from './lib/prisma';
 import { redis } from './lib/redis';
 import { validateStorageConfigOnStartup } from './services/storage-provider.service';
 import { uploadExpiryScheduler } from './workers/upload-expiry.scheduler';
+import { kycExpiryScheduler } from './workers/kyc-expiry.scheduler';
 
 // Initialize Notification Engine
 notificationService.registerProvider(NotificationType.EMAIL, createEmailProvider());
@@ -46,6 +48,7 @@ notificationService.registerProvider(NotificationType.PUSH, new ConsolePushProvi
 const app = express();
 app.disable('x-powered-by');
 app.use(securityHeadersMiddleware);
+app.use(tracingMiddleware);
 const PORT = config.PORT;
 
 const configuredOrigins = process.env.PRODUCTION_CORS_ORIGINS ?? '';
@@ -305,6 +308,7 @@ if (process.env.NODE_ENV !== 'test') {
         logger.info(`API Documentation available at http://localhost:${PORT}/api-docs`);
         feeReportScheduler.start();
         uploadExpiryScheduler.start();
+        kycExpiryScheduler.start();
       });
     });
 }
