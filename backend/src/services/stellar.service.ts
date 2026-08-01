@@ -23,6 +23,7 @@ export class StellarService {
   private currentNetwork: NetworkType;
   private server: Horizon.Server;
   private networkPassphrase: string;
+  private rpcUrls: string[];
 
   // Whitelisted operations for submission
   private readonly ALLOWED_OPERATIONS = [
@@ -41,6 +42,44 @@ export class StellarService {
     this.currentNetwork = NetworkType[networkFromEnv as keyof typeof NetworkType] || NetworkType.TESTNET;
     this.server = new Horizon.Server(config.STELLAR_HORIZON_URL);
     this.networkPassphrase = this.getPassphrase();
+    this.rpcUrls = this.getRpcUrls();
+  }
+
+  private getRpcUrls(): string[] {
+    const rpcUrls = config.STELLAR_RPC_URLS;
+    if (rpcUrls) {
+      return rpcUrls.split(',').map((url) => url.trim()).filter((url) => url.length > 0);
+    }
+    const networkConfig = NETWORKS[this.currentNetwork];
+    return [networkConfig.sorobanRpcUrl];
+  }
+
+  private async executeRpcWithFailover<T>(method: string, ...args: any[]): Promise<T> {
+    const errors: Error[] = [];
+    for (let i = 0; i < this.rpcUrls.length; i++) {
+      const index = i;
+      const rpcServer = new rpc.Server(this.rpcUrls[index]);
+      try {
+        const rpcMethod = (rpcServer as any)[method];
+        if (typeof rpcMethod !== 'function') {
+          throw new Error(`RPC method '${method}' not found on rpc.Server`);
+        }
+        const result = await rpcMethod.apply(rpcServer, args);
+        if (i > 0) {
+          logger.warn(`RPC failover: request succeeded on fallback server at index ${index}`);
+        }
+        return result;
+      } catch (error: any) {
+        errors.push(error);
+        const statusCode = error?.response?.status;
+        if (statusCode && statusCode >= 500) {
+          logger.warn(`RPC server at index ${index} returned ${statusCode}, failing over to next server`);
+          continue;
+        }
+        throw error;
+      }
+    }
+    throw errors[errors.length - 1] || new Error('All RPC servers failed');
   }
 
   public static getInstance(): StellarService {
@@ -57,6 +96,7 @@ export class StellarService {
     this.currentNetwork = network;
     this.server = this.getHorizonServer();
     this.networkPassphrase = this.getPassphrase();
+    this.rpcUrls = this.getRpcUrls();
   }
 
   public getNetwork(): NetworkType {
@@ -71,6 +111,49 @@ export class StellarService {
   public getSorobanRpc(network: NetworkType = this.currentNetwork): rpc.Server {
     const config = NETWORKS[network];
     return new rpc.Server(config.sorobanRpcUrl);
+  }
+
+  public async getSorobanRpcWithFailover(network: NetworkType = this.currentNetwork): Promise<rpc.Server> {
+    if (this.rpcUrls.length <= 1) {
+      return this.getSorobanRpc(network);
+    }
+    const primaryUrl = this.rpcUrls[0];
+    const fallbackUrls = this.rpcUrls.slice(1);
+    const allUrls = [primaryUrl, ...fallbackUrls];
+    const primaryServer = new rpc.Server(primaryUrl);
+    return new Proxy(primaryServer, {
+      get(target: rpc.Server, prop: string, receiver: any) {
+        const value = Reflect.get(target, prop, receiver);
+        if (typeof value === 'function' && prop !== 'constructor') {
+          return async (...args: any[]) => {
+            const errors: Error[] = [];
+            for (let i = 0; i < allUrls.length; i++) {
+              const server = new rpc.Server(allUrls[i]);
+              try {
+                const method = Reflect.get(server, prop, receiver);
+                if (typeof method === 'function') {
+                  const result = await method.apply(server, args);
+                  if (i > 0) {
+                    logger.warn(`RPC failover: request succeeded on fallback server at index ${i}`);
+                  }
+                  return result;
+                }
+              } catch (error: any) {
+                errors.push(error);
+                const statusCode = error?.response?.status;
+                if (statusCode && statusCode >= 500) {
+                  logger.warn(`RPC server at index ${i} returned ${statusCode}, failing over to next server`);
+                  continue;
+                }
+                throw error;
+              }
+            }
+            throw errors[errors.length - 1] || new Error('All RPC servers failed');
+          };
+        }
+        return value;
+      },
+    });
   }
 
   public getPassphrase(network: NetworkType = this.currentNetwork): string {

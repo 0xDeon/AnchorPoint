@@ -95,6 +95,7 @@ const envSchema = z.object({
     .default('Test SDF Network ; September 2015'),
   STELLAR_HORIZON_URL: z.string().url().default('https://horizon-testnet.stellar.org'),
   HORIZON_URL: z.string().url().default('https://horizon-testnet.stellar.org'),
+  STELLAR_RPC_URLS: z.string().optional(),
   STELLAR_FEE_BUMP_SECRET: z.string().optional(),
   STELLAR_DISTRIBUTION_SECRET: z.string().optional(),
   STELLAR_BASE_FEE: z.string().default('100'),
