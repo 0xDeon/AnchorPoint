@@ -29,6 +29,7 @@ pub enum DataKey {
 #[contract]
 pub struct OracleConsumer;
 
+#[allow(deprecated)]
 #[contractimpl]
 impl OracleConsumer {
     /// Initializes the consumer with an admin and the initial oracle source.
@@ -68,7 +69,10 @@ impl OracleConsumer {
             (asset.clone(),).into_val(&env),
         );
 
-        assert!(price_info.asset == asset, "oracle returned mismatched asset");
+        assert!(
+            price_info.asset == asset,
+            "oracle returned mismatched asset"
+        );
         assert!(price_info.price > 0, "oracle returned non-positive price");
 
         env.storage()
@@ -77,8 +81,10 @@ impl OracleConsumer {
         Self::store_observation(&env, asset.clone(), price_info.clone());
 
         // Topic: event name only; asset + price in data.
-        env.events()
-            .publish((symbol_short!("oracle"), symbol_short!("price_upd")), (asset, price_info.price));
+        env.events().publish(
+            (symbol_short!("oracle"), symbol_short!("price_upd")),
+            (asset, price_info.price),
+        );
 
         price_info
     }
@@ -281,7 +287,7 @@ impl OracleConsumer {
             .unwrap_or(DEFAULT_MAX_OBSERVATIONS);
 
         let mut history = Self::get_price_history(env, asset.clone());
-        let last_timestamp = if history.len() > 0 {
+        let last_timestamp = if !history.is_empty() {
             Some(history.get(history.len() - 1).unwrap().timestamp)
         } else {
             None
@@ -359,7 +365,12 @@ mod tests {
         env.ledger().set(ledger);
     }
 
-    fn setup() -> (Env, OracleConsumerClient<'static>, Address, MockOracleClient<'static>) {
+    fn setup() -> (
+        Env,
+        OracleConsumerClient<'static>,
+        Address,
+        MockOracleClient<'static>,
+    ) {
         let env = Env::default();
         env.mock_all_auths();
 
@@ -378,7 +389,10 @@ mod tests {
     fn test_initialization() {
         let (_env, client, _admin, oracle) = setup();
         assert_eq!(client.get_oracle(), oracle.address.clone());
-        assert_eq!(client.get_default_twap_window(), DEFAULT_TWAP_WINDOW_SECONDS);
+        assert_eq!(
+            client.get_default_twap_window(),
+            DEFAULT_TWAP_WINDOW_SECONDS
+        );
         assert_eq!(client.get_max_price_age(), DEFAULT_MAX_PRICE_AGE_SECONDS);
         assert_eq!(client.get_max_observations(), DEFAULT_MAX_OBSERVATIONS);
     }

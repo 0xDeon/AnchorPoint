@@ -35,6 +35,7 @@ pub struct UpgradeProposal {
 #[contract]
 pub struct UpgradeableContract;
 
+#[allow(deprecated)]
 #[contractimpl]
 impl UpgradeableContract {
     pub fn set_security_registry(env: soroban_sdk::Env, registry: soroban_sdk::Address) {

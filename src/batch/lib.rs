@@ -33,9 +33,10 @@ pub struct RetryConfig {
 }
 
 impl RetryConfig {
+    #[allow(clippy::manual_clamp)]
     pub fn validated(self) -> Self {
         RetryConfig {
-            max_attempts: self.max_attempts.max(1).min(5),
+            max_attempts: self.max_attempts.clamp(1, 5),
             delay_ledgers: self.delay_ledgers,
         }
     }
@@ -84,6 +85,7 @@ pub enum DataKey {
 #[contract]
 pub struct BatchExecutor;
 
+#[allow(deprecated)]
 #[contractimpl]
 impl BatchExecutor {
     pub fn initialize(env: Env, admin: Address) {
@@ -92,9 +94,7 @@ impl BatchExecutor {
         }
         admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &admin);
-        env.storage()
-            .instance()
-            .set(&DataKey::Nonce(admin), &0u64);
+        env.storage().instance().set(&DataKey::Nonce(admin), &0u64);
     }
 
     pub fn execute_batch(env: Env, caller: Address, calls: Vec<Call>) -> Vec<Val> {
@@ -105,9 +105,10 @@ impl BatchExecutor {
             .instance()
             .get(&DataKey::Nonce(caller.clone()))
             .unwrap_or(0);
-        env.storage()
-            .instance()
-            .set(&DataKey::Nonce(caller.clone()), &current_nonce.checked_add(1).expect("nonce overflow"));
+        env.storage().instance().set(
+            &DataKey::Nonce(caller.clone()),
+            &current_nonce.checked_add(1).expect("nonce overflow"),
+        );
 
         let mut results = Vec::new(&env);
         for call in calls.iter() {

@@ -59,6 +59,7 @@ pub trait FlashLoanBatchReceiver {
 #[contract]
 pub struct FlashLoanProvider;
 
+#[allow(deprecated)]
 #[contractimpl]
 impl FlashLoanProvider {
     pub fn set_security_registry(env: soroban_sdk::Env, registry: soroban_sdk::Address) {
@@ -192,9 +193,7 @@ impl FlashLoanProvider {
             if balance_after < expected_repayment {
                 panic!(
                     "Flash loan not repaid for token {:?}: expected {}, got {}",
-                    loan.token,
-                    expected_repayment,
-                    balance_after
+                    loan.token, expected_repayment, balance_after
                 );
             }
         }

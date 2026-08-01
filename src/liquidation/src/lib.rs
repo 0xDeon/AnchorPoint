@@ -24,6 +24,7 @@ pub enum DataKey {
 #[contract]
 pub struct LiquidationEngine;
 
+#[allow(deprecated)]
 #[contractimpl]
 impl LiquidationEngine {
     pub fn initialize(
@@ -60,6 +61,9 @@ impl LiquidationEngine {
             collateral_amount: collateral,
             debt_amount: debt,
         };
+        env.storage().persistent().set(&DataKey::Vaults(id), &vault);
+
+        id = id.checked_add(1).expect("vault id overflow");
         env.storage()
             .persistent()
             .set(&DataKey::Vaults(id), &vault);
@@ -139,6 +143,25 @@ impl LiquidationEngine {
             .get(&DataKey::Vaults(vault_id))
             .expect("vault not found");
 
+        let oracle_id: Address = env.storage().instance().get(&DataKey::OracleId).unwrap();
+
+        let collateral_price: u128 = env.invoke_contract(
+            &oracle_id,
+            &symbol_short!("get_price"),
+            soroban_sdk::vec![&env],
+        );
+
+        let collateral_value = vault
+            .collateral_amount
+            .checked_mul(collateral_price)
+            .expect("value overflow");
+        // Assume debt is represented in same base units. Health factor * 100
+        let health_factor = collateral_value
+            .checked_mul(100)
+            .expect("health factor overflow")
+            / vault.debt_amount;
+
+        assert!(health_factor < 120, "vault is healthy"); // 120% min health factor
         let health_factor = Self::get_health_factor(env.clone(), vault_id);
         assert!(health_factor < 12_000, "vault is healthy"); // 120% min
 
@@ -152,12 +175,14 @@ impl LiquidationEngine {
         let _liquidated_collateral = vault.collateral_amount;
 
         vault.collateral_amount = 0;
+        vault.debt_amount = 0; // Assume debt fully cleared by liquidation
         vault.debt_amount = 0;
 
         env.storage()
             .persistent()
             .set(&DataKey::Vaults(vault_id), &vault);
 
+        // Topic: event name only; vault_id (u32) + liquidator + incentive in data.
         env.events().publish(
             (symbol_short!("amm"), symbol_short!("liquidate")),
             (vault_id, liquidator, incentive),
@@ -183,6 +208,32 @@ impl LiquidationEngine {
             "cannot liquidate more than debt"
         );
 
+        let oracle_id: Address = env.storage().instance().get(&DataKey::OracleId).unwrap();
+
+        // Fetch collateral price from oracle
+        let collateral_price: u128 = env.invoke_contract(
+            &oracle_id,
+            &symbol_short!("get_price"),
+            soroban_sdk::vec![&env],
+        );
+
+        let collateral_value = vault.collateral_amount * collateral_price;
+        let health_factor = (collateral_value * 100) / vault.debt_amount;
+
+        // Allow partial liquidation for vaults below 150% health factor (less strict than full liquidation)
+        assert!(
+            health_factor < 150,
+            "vault is healthy for partial liquidation"
+        );
+
+        // Calculate collateral to liquidate proportional to debt being repaid
+        let collateral_ratio = vault.collateral_amount / vault.debt_amount;
+        let collateral_to_liquidate = liquidate_amount * collateral_ratio;
+
+        // Liquidator incentive: 3% spread for partial liquidations (lower incentive than full)
+        let incentive = (collateral_to_liquidate * 3) / 100;
+
+        // Update vault
         let health_factor = Self::get_health_factor(env.clone(), vault_id);
         assert!(
             health_factor < 15_000,
@@ -201,6 +252,7 @@ impl LiquidationEngine {
             .persistent()
             .set(&DataKey::Vaults(vault_id), &vault);
 
+        // Emit partial liquidation event
         env.events().publish(
             (symbol_short!("p_liquid"), vault_id, liquidator),
             (liquidate_amount, collateral_to_liquidate, incentive),

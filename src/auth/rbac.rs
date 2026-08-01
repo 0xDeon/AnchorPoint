@@ -29,6 +29,7 @@ pub enum AccessDataKey {
 /// These can be used from within other contracts to implement role-based access.
 pub struct RBAC;
 
+#[allow(deprecated)]
 impl RBAC {
     /// Checks if an address has the required role or a higher one.
     /// Admin > Moderator > Contributor
@@ -174,6 +175,7 @@ impl RBAC {
 #[contract]
 pub struct RBACContract;
 
+#[allow(deprecated)]
 #[contractimpl]
 impl RBACContract {
     pub fn set_security_registry(env: soroban_sdk::Env, registry: soroban_sdk::Address) {

@@ -13,6 +13,7 @@ pub enum DataKey {
 #[contract]
 pub struct KycVerifier;
 
+#[allow(deprecated)]
 #[contractimpl]
 impl KycVerifier {
     pub fn initialize(env: Env, admin: Address, verifier_pubkey: BytesN<32>) {
@@ -52,8 +53,10 @@ impl KycVerifier {
             .persistent()
             .set(&DataKey::UserKyc(user.clone()), &expires_at);
         // Topic: event name only; user + expires_at in data.
-        env.events()
-            .publish((symbol_short!("kyc"), symbol_short!("kyc_set")), (user, expires_at));
+        env.events().publish(
+            (symbol_short!("kyc"), symbol_short!("kyc_set")),
+            (user, expires_at),
+        );
     }
 
     pub fn is_kyc_valid(env: Env, user: Address) -> bool {
@@ -88,8 +91,7 @@ impl KycVerifier {
 
         env.storage().persistent().remove(&key);
 
-        env.events()
-            .publish((symbol_short!("kyc_rev"), user), ());
+        env.events().publish((symbol_short!("kyc_rev"), user), ());
     }
 }
 

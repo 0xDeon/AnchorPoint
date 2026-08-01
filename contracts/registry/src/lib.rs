@@ -32,6 +32,8 @@ pub struct ContractInfo {
 pub enum DataKey {
     /// Admin address
     Admin,
+    /// Pending admin address for two-step transfer
+    PendingAdmin,
     /// Contract info by contract type (contract_type -> ContractInfo)
     Contract(String),
     /// All registered contract types
@@ -248,10 +250,47 @@ impl Registry {
         let stored_admin: Address = env.storage().instance().get(&DataKey::Admin).expect("admin not set");
         assert!(admin == stored_admin, "unauthorized");
         
+        Self::check_not_zero_address(&env, &new_admin);
+        
         env.storage().instance().set(&DataKey::Admin, &new_admin);
         
         env.events()
             .publish((symbol_short!("xfer_admn"), admin), new_admin);
+    }
+
+    /// Propose a new admin (step 1 of two-step admin transfer)
+    pub fn propose_admin(env: Env, admin: Address, new_admin: Address) {
+        admin.require_auth();
+        
+        let stored_admin: Address = env.storage().instance().get(&DataKey::Admin).expect("admin not set");
+        assert!(admin == stored_admin, "unauthorized");
+        
+        Self::check_not_zero_address(&env, &new_admin);
+        
+        env.storage().instance().set(&DataKey::PendingAdmin, &new_admin);
+        
+        env.events()
+            .publish((symbol_short!("prop_admn"), admin), new_admin);
+    }
+
+    /// Claim admin rights (step 2 of two-step admin transfer)
+    pub fn claim_admin(env: Env, new_admin: Address) {
+        new_admin.require_auth();
+        
+        let pending_admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::PendingAdmin)
+            .expect("no pending admin");
+        assert!(new_admin == pending_admin, "unauthorized");
+        
+        let old_admin: Address = env.storage().instance().get(&DataKey::Admin).expect("admin not set");
+        
+        env.storage().instance().set(&DataKey::Admin, &new_admin);
+        env.storage().instance().remove(&DataKey::PendingAdmin);
+        
+        env.events()
+            .publish((symbol_short!("xfer_admn"), old_admin), new_admin);
     }
 
     /// Pause registry operations (emergency function)
@@ -347,6 +386,11 @@ impl Registry {
             .instance()
             .get(&DataKey::Admin)
             .expect("not initialized")
+    }
+
+    /// Get the pending registry admin if any
+    pub fn get_pending_admin(env: Env) -> Option<Address> {
+        env.storage().instance().get(&DataKey::PendingAdmin)
     }
 
     /// Get the registry version
@@ -648,5 +692,57 @@ mod tests {
         }
         
         assert_eq!(client.get_all_contract_types().len(), 5);
+    }
+
+    #[test]
+    #[should_panic(expected = "cannot register zero address")]
+    fn test_transfer_admin_zero_address() {
+        let (env, client, admin) = setup();
+        
+        use soroban_sdk::xdr::{Hash, ScAddress};
+        use soroban_sdk::TryFromVal;
+        
+        let zero_address = Address::try_from_val(&env, &ScAddress::Contract(Hash([0u8; 32]))).unwrap();
+        client.transfer_admin(&admin, &zero_address);
+    }
+
+    #[test]
+    fn test_propose_and_claim_admin() {
+        let (env, client, admin) = setup();
+        
+        let new_admin = Address::generate(&env);
+        assert_eq!(client.get_pending_admin(), None);
+        
+        client.propose_admin(&admin, &new_admin);
+        assert_eq!(client.get_pending_admin(), Some(new_admin.clone()));
+        assert_eq!(client.get_admin(), admin);
+        
+        client.claim_admin(&new_admin);
+        assert_eq!(client.get_admin(), new_admin);
+        assert_eq!(client.get_pending_admin(), None);
+    }
+
+    #[test]
+    #[should_panic(expected = "cannot register zero address")]
+    fn test_propose_admin_zero_address() {
+        let (env, client, admin) = setup();
+        
+        use soroban_sdk::xdr::{Hash, ScAddress};
+        use soroban_sdk::TryFromVal;
+        
+        let zero_address = Address::try_from_val(&env, &ScAddress::Contract(Hash([0u8; 32]))).unwrap();
+        client.propose_admin(&admin, &zero_address);
+    }
+
+    #[test]
+    #[should_panic(expected = "unauthorized")]
+    fn test_claim_admin_unauthorized() {
+        let (env, client, admin) = setup();
+        
+        let new_admin = Address::generate(&env);
+        let imposter = Address::generate(&env);
+        
+        client.propose_admin(&admin, &new_admin);
+        client.claim_admin(&imposter);
     }
 }

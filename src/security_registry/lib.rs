@@ -142,6 +142,9 @@ mod tests {
         client.pause(&admin);
         assert!(client.is_paused());
 
+        client.unpause(&admin);
+        assert!(!client.is_paused());
+
         let pause_ttl = env.as_contract(&contract_id, || env.storage().instance().get_ttl());
         assert!(pause_ttl >= anchorpoint_utils::storage::INSTANCE_EXTEND_TO);
 

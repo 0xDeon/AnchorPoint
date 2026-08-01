@@ -26,5 +26,23 @@ jobs:
       - name: Clippy
         run: cargo clippy -p anchorpoint-utils -p anchorpoint-security-registry -p event-hub --all-targets --all-features -- -D warnings
 
+      - name: Build (wasm32)
+        run: cargo build --target wasm32v1-none --release
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-scout-audit@0.3.16
+
+      - name: Install Scout system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev pkg-config gcc
+
+      - name: Test sep41-token
+        run: cargo test -p sep41-token
+
+      - name: Test upgradeable
+        run: cargo test -p upgradeable
+
+      - name: Run Security Audit
+        run: ./scripts/security-audit.sh --warn-only
       - name: Test
         run: cargo test -p anchorpoint-utils -p anchorpoint-security-registry -p event-hub --all-features

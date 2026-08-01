@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 use super::*;
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
@@ -41,7 +43,7 @@ fn inject_kyc(env: &Env, contract_id: &Address, user: &Address, expires_at: u64)
 /// and the storage entry is fully removed.
 #[test]
 fn test_revoke_kyc_removes_record() {
-    let (env, contract_id, admin) = setup(true);
+    let (env, contract_id, _admin) = setup(true);
     let client = KycVerifierClient::new(&env, &contract_id);
 
     env.ledger().with_mut(|li| li.timestamp = 1_000);
@@ -49,11 +51,17 @@ fn test_revoke_kyc_removes_record() {
     let user = Address::generate(&env);
     inject_kyc(&env, &contract_id, &user, 999_999);
 
-    assert!(client.is_kyc_valid(&user), "KYC should be valid before revocation");
+    assert!(
+        client.is_kyc_valid(&user),
+        "KYC should be valid before revocation"
+    );
 
     client.revoke_kyc(&user);
 
-    assert!(!client.is_kyc_valid(&user), "KYC should be invalid after revocation");
+    assert!(
+        !client.is_kyc_valid(&user),
+        "KYC should be invalid after revocation"
+    );
 
     // Confirm the key is truly gone from storage, not just expired
     let still_exists = env.as_contract(&contract_id, || {
@@ -91,9 +99,10 @@ fn test_revoke_kyc_rejects_non_admin() {
     // Bootstrap state directly, bypassing auth entirely
     env.as_contract(&contract_id, || {
         env.storage().instance().set(&DataKey::Admin, &admin);
-        env.storage()
-            .instance()
-            .set(&DataKey::VerifierPubKey, &BytesN::from_array(&env, &[1u8; 32]));
+        env.storage().instance().set(
+            &DataKey::VerifierPubKey,
+            &BytesN::from_array(&env, &[1u8; 32]),
+        );
         env.storage()
             .persistent()
             .set(&DataKey::UserKyc(user.clone()), &999_999_u64);

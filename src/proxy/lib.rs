@@ -59,6 +59,7 @@ pub enum DataKey {
 #[contract]
 pub struct ProxyContract;
 
+#[allow(deprecated)]
 #[contractimpl]
 impl ProxyContract {
     // ── Initialisation ────────────────────────────────────────────────────────
@@ -465,7 +466,7 @@ mod tests {
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    fn setup(env: &Env) -> (ProxyContractClient, Address, Address) {
+    fn setup(env: &Env) -> (ProxyContractClient<'_>, Address, Address) {
         env.mock_all_auths();
         let admin = Address::generate(env);
         let impl_id = env.register(MockImpl, ());

@@ -60,6 +60,7 @@ pub enum DataKey {
 #[contract]
 pub struct Bridge;
 
+#[allow(deprecated)]
 #[contractimpl]
 impl Bridge {
     // -----------------------------------------------------------------------
@@ -560,8 +561,8 @@ mod tests {
         amount: i128,
         op: BridgeOp,
     ) -> BridgeMessage {
-        let message_hash = BytesN::from_array(&env, &[0u8; 32]);
-        let signature = BytesN::from_array(&env, &[0u8; 64]);
+        let message_hash = BytesN::from_array(env, &[0u8; 32]);
+        let signature = BytesN::from_array(env, &[0u8; 64]);
 
         BridgeMessage {
             source_chain,
@@ -911,9 +912,10 @@ mod tests {
                 .set(&DataKey::DestinationMinted(chain1, token.clone()), &500i128)
         });
         env.as_contract(&client.address, || {
-            env.storage()
-                .instance()
-                .set(&DataKey::DestinationMinted(chain2, token.clone()), &1000i128)
+            env.storage().instance().set(
+                &DataKey::DestinationMinted(chain2, token.clone()),
+                &1000i128,
+            )
         });
 
         assert_eq!(client.get_collateralization_ratio(&chain1, &token), 20000); // 200%
