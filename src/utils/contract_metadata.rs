@@ -103,5 +103,6 @@ pub fn update<K>(
     };
     env.storage().instance().set(key, &meta);
 
+    #[allow(deprecated)]
     env.events().publish((symbol_short!("meta_upd"),), meta);
 }

@@ -42,6 +42,9 @@ pub enum DataKey {
     ContractMeta,
     /// Whether contract is paused for emergency
     Paused,
+    /// Ledger-sequence checkpoint of RewardPerTokenStored.
+    /// Allows querying the accumulator value at past reward distributions.
+    RewardPerTokenCheckpoint(u32),
 }
 
 /// On-chain branding metadata for the contract.
@@ -141,6 +144,13 @@ impl LiquidStaking {
             env.storage()
                 .instance()
                 .set(&DataKey::RewardPerTokenStored, &rpt);
+
+            // Record a checkpoint at the current ledger sequence so the
+            // accumulator value can be queried historically.
+            let seq = env.ledger().sequence();
+            env.storage()
+                .temporary()
+                .set(&DataKey::RewardPerTokenCheckpoint(seq), &rpt);
         }
 
         // Topic: event name only; from + amount in data.
@@ -385,9 +395,9 @@ impl LiquidStaking {
         let nft_rpt: i128 = env.storage().persistent().get(&DataKey::NftRewardPerTokenPaid(token_id)).unwrap_or(0);
         let amount: i128 = env.storage().persistent().get(&DataKey::StakeAmount(token_id)).unwrap_or(0);
         let accrued: i128 = env.storage().persistent().get(&DataKey::NftRewards(token_id)).unwrap_or(0);
-        
+        let delta = rpt.checked_sub(nft_rpt).unwrap_or_else(|| panic_with_error!(env, Error::RewardsOverflow));
         let pending = accrued.checked_add(
-            amount.checked_mul(rpt - nft_rpt).unwrap_or_else(|| panic_with_error!(env, Error::RewardsOverflow)) / PRECISION
+            amount.checked_mul(delta).unwrap_or_else(|| panic_with_error!(env, Error::RewardsOverflow)) / PRECISION
         ).unwrap_or_else(|| panic_with_error!(env, Error::RewardsOverflow));
         let lock_time: u64 = env.storage().persistent().get(&DataKey::StakeLockTime(token_id)).unwrap_or(0);
 
@@ -397,6 +407,15 @@ impl LiquidStaking {
             lock_time,
             pending_rewards: pending,
         }
+    }
+
+    /// Returns the reward-per-token accumulator value recorded at the given
+    /// ledger sequence, or 0 if no distribution occurred at that sequence.
+    pub fn get_reward_checkpoint(env: Env, ledger_seq: u32) -> i128 {
+        env.storage()
+            .temporary()
+            .get(&DataKey::RewardPerTokenCheckpoint(ledger_seq))
+            .unwrap_or(0)
     }
 
     // ── Emergency Pause ───────────────────────────────────────────────────────
@@ -489,7 +508,8 @@ impl LiquidStaking {
         let rpt: i128 = env.storage().instance().get(&DataKey::RewardPerTokenStored).unwrap_or(0);
         let nft_rpt: i128 = env.storage().persistent().get(&DataKey::NftRewardPerTokenPaid(token_id)).unwrap_or(0);
         let amount: i128 = env.storage().persistent().get(&DataKey::StakeAmount(token_id)).unwrap_or(0);
-        let earned = amount.checked_mul(rpt - nft_rpt).unwrap_or_else(|| panic_with_error!(env, Error::RewardsOverflow)) / PRECISION;
+        let delta = rpt.checked_sub(nft_rpt).unwrap_or_else(|| panic_with_error!(env, Error::RewardsOverflow));
+        let earned = amount.checked_mul(delta).unwrap_or_else(|| panic_with_error!(env, Error::RewardsOverflow)) / PRECISION;
 
         if earned > 0 {
             let prev: i128 = env.storage().persistent().get(&DataKey::NftRewards(token_id)).unwrap_or(0);
@@ -579,7 +599,7 @@ fn u64_to_string(env: &Env, mut n: u64) -> String {
 mod tests {
     use super::*;
     use soroban_sdk::{
-        testutils::{Address as _},
+        testutils::{Address as _, Ledger},
         token::{Client as TokenClient, StellarAssetClient},
         Address, Env, String,
     };
@@ -798,6 +818,114 @@ mod tests {
         let (env, ls_id, _, _, alice, _, _) = setup();
         let client = LiquidStakingClient::new(&env, &ls_id);
         client.pause(&alice); // Should panic
+    }
+
+    #[test]
+    fn test_reward_calculation_multiple_users() {
+        let (env, ls_id, _, admin, alice, bob, reward_token) = setup();
+        let client = LiquidStakingClient::new(&env, &ls_id);
+
+        // Alice stakes 300k, Bob stakes 200k
+        let alice_nft = client.stake(&alice, &300_000, &3600);
+        let bob_nft = client.stake(&bob, &200_000, &3600);
+
+        let reward_client = TokenClient::new(&env, &reward_token);
+
+        // Advance ledger so deposits happen at different sequences
+        env.ledger().set_sequence_number(1000);
+        // Deposit 5_000 reward tokens — 60% to Alice, 40% to Bob
+        client.deposit_rewards(&admin, &5_000);
+        let checkpoint_1000 = client.get_reward_checkpoint(&1000);
+        // rpt = 0 + 5_000 * PRECISION / 500_000 = 10_000_000_000_000_000
+        let expected_rpt = 5_000_i128 * PRECISION / 500_000_i128;
+        assert_eq!(checkpoint_1000, expected_rpt);
+
+        // No claims yet — Bob gets pending in info
+        let alice_info = client.get_stake_info(&alice_nft);
+        let bob_info = client.get_stake_info(&bob_nft);
+        // Alice: 300_000 * expected_rpt / PRECISION = 300_000 * 10_000_000_000_000_000 / 10^18 = 3_000
+        assert_eq!(alice_info.pending_rewards, 3_000);
+        // Bob: 200_000 * expected_rpt / PRECISION = 2_000
+        assert_eq!(bob_info.pending_rewards, 2_000);
+
+        // Advance ledger, deposit more rewards
+        env.ledger().set_sequence_number(2000);
+        client.deposit_rewards(&admin, &5_000);
+        let checkpoint_2000 = client.get_reward_checkpoint(&2000);
+        // rpt = 10_000_000_000_000_000 + 5_000 * PRECISION / 500_000 = 20_000_000_000_000_000
+        let expected_rpt_2 = expected_rpt + 5_000_i128 * PRECISION / 500_000_i128;
+        assert_eq!(checkpoint_2000, expected_rpt_2);
+
+        // Bob claims his rewards
+        let bob_claimed = client.claim(&bob, &bob_nft);
+        // Bob's total after 2 deposits: 200_000 * expected_rpt_2 / PRECISION = 200_000 * 20_000_000_000_000_000 / 10^18 = 4_000
+        assert_eq!(bob_claimed, 4_000);
+        assert_eq!(reward_client.balance(&bob), 4_000);
+
+        // Alice claims her rewards
+        let alice_claimed = client.claim(&alice, &alice_nft);
+        assert_eq!(alice_claimed, 6_000);
+        assert_eq!(reward_client.balance(&alice), 6_000);
+
+        // Both users' pending rewards should be 0 after claiming
+        let alice_post = client.get_stake_info(&alice_nft);
+        assert_eq!(alice_post.pending_rewards, 0);
+        let bob_post = client.get_stake_info(&bob_nft);
+        assert_eq!(bob_post.pending_rewards, 0);
+
+        // Contract should have no reward tokens left
+        assert_eq!(reward_client.balance(&ls_id), 0);
+
+        // Query a ledger with no checkpoint
+        let no_checkpoint = client.get_reward_checkpoint(&500);
+        assert_eq!(no_checkpoint, 0);
+    }
+
+    #[test]
+    fn test_rewards_unstake_distributes_pending() {
+        let (env, ls_id, _, admin, alice, _, reward_token) = setup();
+        let client = LiquidStakingClient::new(&env, &ls_id);
+
+        let token_id = client.stake(&alice, &500_000, &0);
+
+        // Deposit rewards
+        client.deposit_rewards(&admin, &10_000);
+
+        // Advance ledger past the lock (lock_duration = 0, so already unlocked)
+        let info = client.get_stake_info(&token_id);
+        assert_eq!(info.pending_rewards, 10_000);
+
+        // Unstake — should pay rewards
+        let reward_client = TokenClient::new(&env, &reward_token);
+        let alice_bal_before = reward_client.balance(&alice);
+        client.unstake(&alice, &token_id);
+        let alice_bal_after = reward_client.balance(&alice);
+        assert_eq!(alice_bal_after - alice_bal_before, 10_000);
+    }
+
+    #[test]
+    fn test_rewards_follow_nft_on_transfer() {
+        let (env, ls_id, nft_id, admin, alice, bob, reward_token) = setup();
+        let client = LiquidStakingClient::new(&env, &ls_id);
+        let nft_client = nft_metadata::NftMetadataContractClient::new(&env, &nft_id);
+
+        let token_id = client.stake(&alice, &500_000, &0);
+
+        // First reward deposit while Alice owns
+        client.deposit_rewards(&admin, &2_000);
+
+        // Transfer to Bob
+        nft_client.transfer(&alice, &bob, &token_id);
+
+        // Second reward deposit while Bob owns
+        client.deposit_rewards(&admin, &2_000);
+
+        // Bob claims — gets all 4_000 (rewards follow the NFT)
+        let bob_claimed = client.claim(&bob, &token_id);
+        assert_eq!(bob_claimed, 4_000);
+
+        let reward_client = TokenClient::new(&env, &reward_token);
+        assert_eq!(reward_client.balance(&bob), 4_000);
     }
 
     #[test]

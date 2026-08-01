@@ -14,6 +14,20 @@ const envSchema = z.object({
     .transform((val: string) => parseInt(val, 10))
     .pipe(z.number().positive()),
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required').default('file:./prisma/dev.db'),
+  // PostgreSQL connection pool configuration for production high-concurrency workloads.
+  DB_CONNECTION_LIMIT: z
+    .string()
+    .default('20')
+    .transform((val: string) => parseInt(val, 10))
+    .pipe(z.number().int().min(1).max(100)),
+  DB_POOL_TIMEOUT: z
+    .string()
+    .default('10')
+    .transform((val: string) => parseInt(val, 10))
+    .pipe(z.number().int().min(1).max(60)),
+  // SSL mode for PostgreSQL connections. Defaults to 'disable' for safe local
+  // development. Set to 'require' (or stricter) for production deployments.
+  DB_SSL_MODE: z.enum(['require', 'disable', 'allow', 'prefer', 'verify-ca', 'verify-full']).default('disable'),
   JWT_SECRET: z.string().min(8, 'JWT_SECRET must be at least 8 characters').default('stellar-anchor-secret'),
   SEP24_INTERACTIVE_URL_JWT_SECRET: z
     .string()
@@ -44,11 +58,44 @@ const envSchema = z.object({
     .pipe(z.number().int().min(0)),
   STELLAR_NETWORK: z.enum(['testnet', 'public', 'futurenet']).default('testnet'),
   RECURRING_PAYMENTS_WORKER_CRON: z.string().default('*/1 * * * *'),
+  // Exponential backoff configuration for the recurring payments retry worker.
+  // Max number of retry attempts for a single occurrence before giving up and
+  // deferring to the next scheduled (cron) run.
+  RECURRING_PAYMENTS_MAX_RETRIES: z
+    .string()
+    .default('5')
+    .transform((val: string) => parseInt(val, 10))
+    .pipe(z.number().int().min(0).max(20)),
+  // Base delay (ms) for the first retry.
+  RECURRING_PAYMENTS_BACKOFF_BASE_MS: z
+    .string()
+    .default('30000')
+    .transform((val: string) => parseInt(val, 10))
+    .pipe(z.number().int().min(0)),
+  // Upper bound (ms) on any single backoff delay.
+  RECURRING_PAYMENTS_BACKOFF_MAX_MS: z
+    .string()
+    .default('3600000')
+    .transform((val: string) => parseInt(val, 10))
+    .pipe(z.number().int().min(0)),
+  // Multiplier applied per attempt (delay = base * multiplier^(attempt-1)).
+  RECURRING_PAYMENTS_BACKOFF_MULTIPLIER: z
+    .string()
+    .default('2')
+    .transform((val: string) => parseFloat(val))
+    .pipe(z.number().min(1)),
+  // Fractional jitter (0..1) applied to each delay to avoid thundering herds.
+  RECURRING_PAYMENTS_BACKOFF_JITTER: z
+    .string()
+    .default('0.2')
+    .transform((val: string) => parseFloat(val))
+    .pipe(z.number().min(0).max(1)),
   STELLAR_NETWORK_PASSPHRASE: z
     .string()
     .default('Test SDF Network ; September 2015'),
   STELLAR_HORIZON_URL: z.string().url().default('https://horizon-testnet.stellar.org'),
   HORIZON_URL: z.string().url().default('https://horizon-testnet.stellar.org'),
+  STELLAR_RPC_URLS: z.string().optional(),
   STELLAR_FEE_BUMP_SECRET: z.string().optional(),
   STELLAR_DISTRIBUTION_SECRET: z.string().optional(),
   STELLAR_BASE_FEE: z.string().default('100'),
@@ -98,6 +145,21 @@ const envSchema = z.object({
   ANCHOR_PUBLIC_KEY: z.string().optional(), // For SEP-10 challenges
   ANCHOR_SECRET_KEY: z.string().optional(), // For SEP-10 challenges
   REGISTRY_CONTRACT_ID: z.string().optional(), // Registry contract address
+  // SEP-40 oracle (price feed) contract address consumed by the price feed
+  // subscription manager.
+  SEP40_ORACLE_CONTRACT_ID: z.string().optional(),
+  // Default polling interval (ms) for SEP-40 price feed subscriptions.
+  SEP40_POLL_INTERVAL_MS: z
+    .string()
+    .default('60000')
+    .transform((val: string) => parseInt(val, 10))
+    .pipe(z.number().int().min(1000)),
+  // Maximum age (ms) of an on-chain price before it is considered stale.
+  SEP40_MAX_PRICE_AGE_MS: z
+    .string()
+    .default('300000')
+    .transform((val: string) => parseInt(val, 10))
+    .pipe(z.number().int().min(0)),
   SEP12_MAX_FILE_SIZE_MB: z
     .string()
     .default('20')
@@ -123,9 +185,9 @@ const envSchema = z.object({
     .default('30')
     .transform((val: string) => parseInt(val, 10))
     .pipe(z.number().int().min(0).max(300)),
-  SEP38_ASSETS_CACHE_TTL_SECONDS: z
+  UPLOAD_URL_EXPIRY_SECONDS: z
     .string()
-    .default('3600')
+    .default('900')
     .transform((val: string) => parseInt(val, 10))
     .pipe(z.number().int().min(60).max(86400)),
 }).superRefine((data, ctx) => {
@@ -159,6 +221,64 @@ if (!parsed.success) {
 export const config = parsed.data;
 export type Config = typeof config;
 
+const SENSITIVE_CONFIG_KEYS = [
+  'DATABASE_URL',
+  'JWT_SECRET',
+  'ANCHOR_SECRET_KEY',
+  'STELLAR_DISTRIBUTION_SECRET',
+  'STELLAR_FEE_BUMP_SECRET',
+  'RELAYER_SECRET_KEY',
+  'WEBHOOK_SECRET',
+  'SIGNING_KEY',
+] as const;
+
+/**
+ * Decrypt KMS/Vault-prefixed sensitive env values onto the live config object.
+ * Falls back to local plaintext in development when KMS is unavailable.
+ * Call once during application startup (before serving traffic).
+ */
+export async function hydrateEncryptedConfigSecrets(): Promise<void> {
+  // Lazy import avoids circular dependency at module load time
+  const {
+    resolveSensitiveEnvSecrets,
+    buildKeyManagementConfigFromEnv,
+    initializeKeyManagement,
+  } = await import('../lib/key-management.service');
+
+  const kmConfig = buildKeyManagementConfigFromEnv({
+    KEY_MANAGEMENT_BACKEND: config.KEY_MANAGEMENT_BACKEND,
+    AWS_KMS_KEY_ARN: config.AWS_KMS_KEY_ARN,
+    AWS_REGION: config.AWS_REGION,
+    AWS_ACCESS_KEY_ID: config.AWS_ACCESS_KEY_ID,
+    AWS_SECRET_ACCESS_KEY: config.AWS_SECRET_ACCESS_KEY,
+    VAULT_ADDR: config.VAULT_ADDR,
+    VAULT_TOKEN: config.VAULT_TOKEN,
+    VAULT_TRANSIT_PATH: config.VAULT_TRANSIT_PATH,
+  });
+
+  if (kmConfig) {
+    try {
+      initializeKeyManagement(kmConfig);
+    } catch {
+      // Initialization failures are handled by decrypt fallbacks / startup checks
+    }
+  }
+
+  const current: Record<string, string | undefined> = {};
+  for (const key of SENSITIVE_CONFIG_KEYS) {
+    current[key] = (config as Record<string, unknown>)[key] as string | undefined;
+  }
+
+  const resolved = await resolveSensitiveEnvSecrets(current, [...SENSITIVE_CONFIG_KEYS]);
+
+  for (const key of SENSITIVE_CONFIG_KEYS) {
+    if (resolved[key] !== undefined) {
+      (config as Record<string, unknown>)[key] = resolved[key];
+      process.env[key] = resolved[key];
+    }
+  }
+}
+
 const uiFieldRequirementSchema = z.object({
   key: z.string().min(1, 'Field key is required'),
   label: z.string().min(1, 'Field label is required'),
@@ -173,6 +293,7 @@ const dashboardUiSchema = z.object({
   primaryColor: z.string().regex(/^#([0-9a-fA-F]{6})$/, 'Primary color must be a hex value').default('#3b82f6'),
   accentColor: z.string().regex(/^#([0-9a-fA-F]{6})$/, 'Accent color must be a hex value').default('#14b8a6'),
   supportEmail: z.string().email().optional(),
+  bannerMessage: z.string().optional(),
   fieldRequirements: z.object({
     deposit: z.array(uiFieldRequirementSchema).default([]),
     withdraw: z.array(uiFieldRequirementSchema).default([]),
@@ -182,6 +303,22 @@ const dashboardUiSchema = z.object({
     withdraw: [],
     kyc: [],
   }),
+});
+
+const sep31AssetConfigSchema = z.object({
+  enabled: z.boolean(),
+  min_amount: z.number().positive(),
+  max_amount: z.number().positive(),
+  fee_fixed: z.number().min(0),
+  fee_percent: z.number().min(0),
+  quotes_supported: z.boolean().default(false),
+  quotes_required: z.boolean().default(false),
+  sender_sep12_type: z.string().default('sep31-sender'),
+  receiver_sep12_type: z.string().default('sep31-receiver'),
+});
+
+const sep31ConfigSchema = z.object({
+  assets: z.record(z.string(), sep31AssetConfigSchema),
 });
 
 export const dynamicConfigSchema = z.object({
@@ -196,6 +333,32 @@ export const dynamicConfigSchema = z.object({
   STELLAR_HORIZON_URL: z.string().url(),
   STELLAR_FEE_BUMP_SECRET: z.string().optional(),
   STELLAR_BASE_FEE: z.string(),
+  sep31: sep31ConfigSchema.default({
+    assets: {
+      USDC: {
+        enabled: true,
+        min_amount: 1,
+        max_amount: 1_000_000,
+        fee_fixed: 0,
+        fee_percent: 0.5,
+        quotes_supported: false,
+        quotes_required: false,
+        sender_sep12_type: 'sep31-sender',
+        receiver_sep12_type: 'sep31-receiver',
+      },
+      EURC: {
+        enabled: true,
+        min_amount: 1,
+        max_amount: 1_000_000,
+        fee_fixed: 0,
+        fee_percent: 0.5,
+        quotes_supported: false,
+        quotes_required: false,
+        sender_sep12_type: 'sep31-sender',
+        receiver_sep12_type: 'sep31-receiver',
+      },
+    },
+  }),
   ui: dashboardUiSchema.default({
     brandName: 'AnchorPoint',
     primaryColor: '#3b82f6',

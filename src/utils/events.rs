@@ -125,6 +125,7 @@ mod tests {
     use soroban_sdk::{
         contract, contractimpl, testutils::Address as _, testutils::Events, vec, IntoVal,
     };
+    use soroban_sdk::{contract, contractimpl, testutils::Address as _, testutils::Events, vec, IntoVal};
 
     #[contract]
     pub struct DummyContract;

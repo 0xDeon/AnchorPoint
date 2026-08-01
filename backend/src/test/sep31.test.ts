@@ -70,7 +70,11 @@ describe("POST /sep31/transactions", () => {
   });
 
   it("returns 400 when amount is missing", async () => {
-    const { amount, ...body } = validBody;
+    const body = {
+      asset_code: validBody.asset_code,
+      sender_id: validBody.sender_id,
+      receiver_id: validBody.receiver_id,
+    };
     const res = await request(app).post("/sep31/transactions").send(body);
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/amount/);
@@ -85,7 +89,11 @@ describe("POST /sep31/transactions", () => {
   });
 
   it("returns 400 when asset_code is missing", async () => {
-    const { asset_code, ...body } = validBody;
+    const body = {
+      amount: validBody.amount,
+      sender_id: validBody.sender_id,
+      receiver_id: validBody.receiver_id,
+    };
     const res = await request(app).post("/sep31/transactions").send(body);
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/asset_code/);
@@ -100,14 +108,22 @@ describe("POST /sep31/transactions", () => {
   });
 
   it("returns 400 when neither sender_id nor sender_info is provided", async () => {
-    const { sender_id, ...body } = validBody;
+    const body = {
+      amount: validBody.amount,
+      asset_code: validBody.asset_code,
+      receiver_id: validBody.receiver_id,
+    };
     const res = await request(app).post("/sep31/transactions").send(body);
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/sender/);
   });
 
   it("returns 400 when neither receiver_id nor receiver_info is provided", async () => {
-    const { receiver_id, ...body } = validBody;
+    const body = {
+      amount: validBody.amount,
+      asset_code: validBody.asset_code,
+      sender_id: validBody.sender_id,
+    };
     const res = await request(app).post("/sep31/transactions").send(body);
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/receiver/);
@@ -221,6 +237,8 @@ describe("GET /sep31/transactions/:id", () => {
     const res = await request(app).get(`/sep31/transactions/${transactionId}`);
     expect(res.body.transaction.amount_out).toBeDefined();
     expect(res.body.transaction.amount_fee).toBeDefined();
+    expect(res.body.transaction.amount_out).toMatch(/^\d+\.\d{7}$/);
+    expect(res.body.transaction.amount_fee).toMatch(/^\d+\.\d{7}$/);
   });
 });
 

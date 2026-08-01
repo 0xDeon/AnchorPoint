@@ -1,12 +1,15 @@
 import {
   createStorageProvider,
   GcsStorageProvider,
+  MAX_UPLOAD_SIZE_BYTES,
   MockStorageProvider,
   S3StorageProvider,
   StorageProviderError,
   storageConfigFromEnv,
+  validateKycUpload,
   validateStorageProviderConfig,
   validateStorageConfigOnStartup,
+  validateUploadSize,
 } from './storage-provider.service';
 import logger from '../utils/logger';
 
@@ -221,5 +224,61 @@ describe('StorageProvider initialization', () => {
     it('rejects empty bucket at construction', () => {
       expect(() => new MockStorageProvider('')).toThrow('STORAGE_BUCKET is required');
     });
+  });
+});
+
+describe('validateUploadSize', () => {
+  it('accepts files at exactly the 10 MB limit', () => {
+    expect(() => validateUploadSize(MAX_UPLOAD_SIZE_BYTES)).not.toThrow();
+  });
+
+  it('accepts files smaller than 10 MB', () => {
+    expect(() => validateUploadSize(5 * 1024 * 1024)).not.toThrow();
+  });
+
+  it('rejects files larger than 10 MB', () => {
+    expect(() => validateUploadSize(MAX_UPLOAD_SIZE_BYTES + 1)).toThrow(StorageProviderError);
+    expect(() => validateUploadSize(MAX_UPLOAD_SIZE_BYTES + 1)).toThrow('exceeds the maximum allowed size');
+  });
+});
+
+describe('validateKycUpload', () => {
+  const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]);
+  const png  = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a]);
+  const pdf  = Buffer.from([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31]); // %PDF-1
+
+  it('accepts a valid JPEG buffer declared as image/jpeg', () => {
+    expect(() => validateKycUpload(jpeg, 'image/jpeg')).not.toThrow();
+  });
+
+  it('accepts a valid PNG buffer declared as image/png', () => {
+    expect(() => validateKycUpload(png, 'image/png')).not.toThrow();
+  });
+
+  it('accepts a valid PDF buffer declared as application/pdf', () => {
+    expect(() => validateKycUpload(pdf, 'application/pdf')).not.toThrow();
+  });
+
+  it('rejects a PDF buffer declared as image/jpeg', () => {
+    expect(() => validateKycUpload(pdf, 'image/jpeg')).toThrow(StorageProviderError);
+    expect(() => validateKycUpload(pdf, 'image/jpeg')).toThrow('magic bytes do not match');
+  });
+
+  it('rejects a JPEG buffer declared as image/png', () => {
+    expect(() => validateKycUpload(jpeg, 'image/png')).toThrow(StorageProviderError);
+  });
+
+  it('rejects a JPEG buffer declared as application/pdf', () => {
+    expect(() => validateKycUpload(jpeg, 'application/pdf')).toThrow(StorageProviderError);
+  });
+
+  it('rejects an unsupported MIME type', () => {
+    expect(() => validateKycUpload(jpeg, 'image/gif')).toThrow(StorageProviderError);
+    expect(() => validateKycUpload(jpeg, 'image/gif')).toThrow('Unsupported MIME type');
+  });
+
+  it('rejects a buffer too small to determine type', () => {
+    expect(() => validateKycUpload(Buffer.from([0xff]), 'image/jpeg')).toThrow(StorageProviderError);
+    expect(() => validateKycUpload(Buffer.from([0xff]), 'image/jpeg')).toThrow('too small');
   });
 });

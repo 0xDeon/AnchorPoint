@@ -5,6 +5,7 @@ import { AuthRequest } from '../middleware/auth.middleware';
 import { getAsset, isDepositSupported, isWithdrawSupported, normalizeAssetCode } from '../../services/kyc.service';
 import { ASSETS } from '../../config/assets';
 import { computeAssetFee } from '../../services/fee.service';
+import { formatDecimal, toDecimal } from '../../utils/decimal';
 import logger from '../../utils/logger';
 
 /**
@@ -83,10 +84,10 @@ export const sep6Deposit = async (req: AuthRequest, res: Response): Promise<Resp
 
   const asset = getAsset(code)!;
 
-  let parsedAmount = 0;
+  let amountValue: ReturnType<typeof toDecimal> | null = null;
   if (amount) {
-    parsedAmount = parseFloat(amount);
-    if (isNaN(parsedAmount) || parsedAmount < parseFloat(asset.minAmount) || parsedAmount > parseFloat(asset.maxAmount)) {
+    amountValue = toDecimal(amount);
+    if (!amountValue.isFinite() || amountValue.isNaN() || amountValue.lt(asset.minAmount) || amountValue.gt(asset.maxAmount)) {
       return res.status(400).json({
         error: `Amount must be between ${asset.minAmount} and ${asset.maxAmount} for ${code}.`,
       });
@@ -95,7 +96,7 @@ export const sep6Deposit = async (req: AuthRequest, res: Response): Promise<Resp
 
   // Compute the fee for the given amount; fall back to the asset's fixed fee
   // when no amount is supplied so the client always gets a fee estimate.
-  const feeAmount = parsedAmount > 0 ? computeAssetFee(asset, parsedAmount) : asset.feeFixed;
+  const feeAmount = amountValue && amountValue.gt(0) ? computeAssetFee(asset, amount) : asset.feeFixed;
 
   try {
     const tx = await prisma.transaction.create({
@@ -114,7 +115,7 @@ export const sep6Deposit = async (req: AuthRequest, res: Response): Promise<Resp
         amount: amount || '0',
         type: 'DEPOSIT',
         status: 'PENDING',
-        feeAmount: String(feeAmount),
+        feeAmount: formatDecimal(feeAmount),
         feeAssetCode: code,
         feeType: asset.feeType.toUpperCase(),
         senderInfo: {
@@ -140,7 +141,7 @@ export const sep6Deposit = async (req: AuthRequest, res: Response): Promise<Resp
       max_amount: asset.maxAmount,
       fee_fixed: asset.feeFixed,
       fee_percent: asset.feePercent,
-      fee_amount: String(feeAmount),
+      fee_amount: formatDecimal(feeAmount),
       extra_info: {
         message: 'Include the transaction ID as the memo when sending funds.',
         memo: txMemo,
@@ -195,10 +196,10 @@ export const sep6Withdraw = async (req: AuthRequest, res: Response): Promise<Res
 
   const asset = getAsset(code)!;
 
-  let parsedAmount = 0;
+  let amountValue: ReturnType<typeof toDecimal> | null = null;
   if (amount) {
-    parsedAmount = parseFloat(amount);
-    if (isNaN(parsedAmount) || parsedAmount < parseFloat(asset.minAmount) || parsedAmount > parseFloat(asset.maxAmount)) {
+    amountValue = toDecimal(amount);
+    if (!amountValue.isFinite() || amountValue.isNaN() || amountValue.lt(asset.minAmount) || amountValue.gt(asset.maxAmount)) {
       return res.status(400).json({
         error: `Amount must be between ${asset.minAmount} and ${asset.maxAmount} for ${code}.`,
       });
@@ -207,9 +208,9 @@ export const sep6Withdraw = async (req: AuthRequest, res: Response): Promise<Res
 
   // Compute the fee for the given amount; fall back to the asset's fixed fee
   // when no amount was supplied so the client always gets a fee estimate.
-  const feeAmount = parsedAmount > 0 ? computeAssetFee(asset, parsedAmount) : asset.feeFixed;
-  const amountOut = parsedAmount > 0
-    ? parseFloat((parsedAmount - feeAmount).toFixed(7))
+  const feeAmount = amountValue && amountValue.gt(0) ? computeAssetFee(asset, amount) : asset.feeFixed;
+  const amountOut = amountValue && amountValue.gt(0)
+    ? formatDecimal(amountValue.minus(feeAmount))
     : undefined;
 
   try {
@@ -226,7 +227,7 @@ export const sep6Withdraw = async (req: AuthRequest, res: Response): Promise<Res
         amount: amount || '0',
         type: 'WITHDRAW',
         status: 'PENDING',
-        feeAmount: String(feeAmount),
+        feeAmount: formatDecimal(feeAmount),
         feeAssetCode: code,
         feeType: asset.feeType.toUpperCase(),
         receiverInfo: {
@@ -251,8 +252,8 @@ export const sep6Withdraw = async (req: AuthRequest, res: Response): Promise<Res
       max_amount: asset.maxAmount,
       fee_fixed: asset.feeFixed,
       fee_percent: asset.feePercent,
-      fee_amount: String(feeAmount),
-      ...(amountOut !== undefined ? { amount_out: String(amountOut) } : {}),
+      fee_amount: formatDecimal(feeAmount),
+      ...(amountOut !== undefined ? { amount_out: amountOut } : {}),
       type,
       extra_info: {
         message: `Send ${code} to the anchor account with the memo. Funds will be sent to ${dest}${dest_extra ? ` (routing: ${dest_extra})` : ''}.`,

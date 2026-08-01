@@ -1,8 +1,12 @@
 #![cfg(test)]
 
-use super::{BatchExecutor, BatchExecutorClient, Call, CallWithRetry, OpStatus, RetryConfig};
+use super::{BatchExecutor, BatchExecutorClient, Call, CallWithRetry, OpStatus, RetryConfig, TransferOp};
 use soroban_sdk::{
     contract, contractimpl, symbol_short, testutils::Address as _, Env, IntoVal, Vec,
+    contract, contractimpl, symbol_short,
+    testutils::Address as _,
+    token::StellarAssetClient,
+    Env, IntoVal, Vec,
 };
 
 #[contract]
@@ -319,4 +323,125 @@ fn test_retry_config_clamping() {
         .max_attempts,
         5
     );
+}
+
+// ============================================================================
+// execute_transfers tests
+// ============================================================================
+
+fn mint_and_setup_token(env: &Env, admin: &soroban_sdk::Address, amount: i128) -> soroban_sdk::Address {
+    let sac = env.register_stellar_asset_contract_v2(admin.clone());
+    let addr = sac.address();
+    StellarAssetClient::new(env, &addr).mint(admin, &amount);
+    addr
+}
+
+#[test]
+fn test_execute_transfers_success() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let batch_client = setup(&env);
+
+    let admin = soroban_sdk::Address::generate(&env);
+    let recipient = soroban_sdk::Address::generate(&env);
+    let token_addr = mint_and_setup_token(&env, &admin, 1000);
+
+    let ops = Vec::from_array(&env, [TransferOp {
+        token: token_addr.clone(),
+        from: admin.clone(),
+        to: recipient.clone(),
+        amount: 300,
+    }]);
+
+    let caller = soroban_sdk::Address::generate(&env);
+    let executed = batch_client.execute_transfers(&caller, &ops);
+    assert_eq!(executed, 1);
+
+    let token_client = soroban_sdk::token::Client::new(&env, &token_addr);
+    assert_eq!(token_client.balance(&recipient), 300);
+    assert_eq!(token_client.balance(&admin), 700);
+}
+
+#[test]
+fn test_execute_transfers_multiple_ops() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let batch_client = setup(&env);
+
+    let admin = soroban_sdk::Address::generate(&env);
+    let bob = soroban_sdk::Address::generate(&env);
+    let carol = soroban_sdk::Address::generate(&env);
+    let token_addr = mint_and_setup_token(&env, &admin, 1000);
+
+    let ops = Vec::from_array(&env, [
+        TransferOp { token: token_addr.clone(), from: admin.clone(), to: bob.clone(), amount: 200 },
+        TransferOp { token: token_addr.clone(), from: admin.clone(), to: carol.clone(), amount: 300 },
+    ]);
+
+    let caller = soroban_sdk::Address::generate(&env);
+    let executed = batch_client.execute_transfers(&caller, &ops);
+    assert_eq!(executed, 2);
+
+    let token_client = soroban_sdk::token::Client::new(&env, &token_addr);
+    assert_eq!(token_client.balance(&bob), 200);
+    assert_eq!(token_client.balance(&carol), 300);
+    assert_eq!(token_client.balance(&admin), 500);
+}
+
+#[test]
+#[should_panic(expected = "empty batch")]
+fn test_execute_transfers_empty_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let batch_client = setup(&env);
+    let caller = soroban_sdk::Address::generate(&env);
+    let ops: Vec<TransferOp> = Vec::new(&env);
+    batch_client.execute_transfers(&caller, &ops);
+}
+
+#[test]
+#[should_panic(expected = "batch exceeds max size of 50")]
+fn test_execute_transfers_over_limit_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let batch_client = setup(&env);
+
+    let admin = soroban_sdk::Address::generate(&env);
+    let token_addr = mint_and_setup_token(&env, &admin, 100_000);
+    let recipient = soroban_sdk::Address::generate(&env);
+
+    let mut ops = Vec::new(&env);
+    for _ in 0..51 {
+        ops.push_back(TransferOp {
+            token: token_addr.clone(),
+            from: admin.clone(),
+            to: recipient.clone(),
+            amount: 1,
+        });
+    }
+
+    let caller = soroban_sdk::Address::generate(&env);
+    batch_client.execute_transfers(&caller, &ops);
+}
+
+#[test]
+#[should_panic(expected = "amount must be positive")]
+fn test_execute_transfers_zero_amount_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let batch_client = setup(&env);
+
+    let admin = soroban_sdk::Address::generate(&env);
+    let token_addr = mint_and_setup_token(&env, &admin, 1000);
+    let recipient = soroban_sdk::Address::generate(&env);
+
+    let ops = Vec::from_array(&env, [TransferOp {
+        token: token_addr.clone(),
+        from: admin.clone(),
+        to: recipient.clone(),
+        amount: 0,
+    }]);
+
+    let caller = soroban_sdk::Address::generate(&env);
+    batch_client.execute_transfers(&caller, &ops);
 }

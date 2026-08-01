@@ -19,7 +19,7 @@ CREATE TABLE "Notification" (
     "type" TEXT NOT NULL,
     "status" TEXT NOT NULL DEFAULT 'PENDING',
     "message" TEXT NOT NULL,
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "createdAt" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "Notification_transactionId_fkey" FOREIGN KEY ("transactionId") REFERENCES "Transaction" ("id") ON DELETE SET NULL ON UPDATE CASCADE
 );
 
@@ -45,49 +45,29 @@ CREATE TABLE "ContractJob" (
     "maxAttempts" INTEGER NOT NULL DEFAULT 3,
     "createdBy" TEXT,
     "metadata" JSONB,
-    "startedAt" DATETIME,
-    "completedAt" DATETIME,
-    "failedAt" DATETIME,
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" DATETIME NOT NULL
+    "startedAt" TIMESTAMP WITH TIME ZONE,
+    "completedAt" TIMESTAMP WITH TIME ZONE,
+    "failedAt" TIMESTAMP WITH TIME ZONE,
+    "createdAt" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+-- Note: "User".phone, NotificationPreference, Notification, and ContractJob
+-- were already created by 20260623000000_init_postgres (the canonical baseline).
+-- This migration only adds the UploadRecord table which is new.
 
 -- CreateTable
 CREATE TABLE "UploadRecord" (
-    "id" TEXT NOT NULL PRIMARY KEY,
+    "id" TEXT NOT NULL,
     "key" TEXT NOT NULL,
     "contentType" TEXT NOT NULL,
     "status" TEXT NOT NULL DEFAULT 'PENDING',
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" DATETIME NOT NULL
+    "createdAt" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "UploadRecord_pkey" PRIMARY KEY ("id")
 );
-
--- CreateIndex
-CREATE UNIQUE INDEX "NotificationPreference_userId_key" ON "NotificationPreference"("userId");
-
--- CreateIndex
-CREATE INDEX "NotificationPreference_userId_idx" ON "NotificationPreference"("userId");
-
--- CreateIndex
-CREATE INDEX "Notification_userId_idx" ON "Notification"("userId");
-
--- CreateIndex
-CREATE INDEX "Notification_transactionId_idx" ON "Notification"("transactionId");
-
--- CreateIndex
-CREATE UNIQUE INDEX "ContractJob_jobId_key" ON "ContractJob"("jobId");
-
--- CreateIndex
-CREATE INDEX "ContractJob_jobId_idx" ON "ContractJob"("jobId");
-
--- CreateIndex
-CREATE INDEX "ContractJob_status_idx" ON "ContractJob"("status");
-
--- CreateIndex
-CREATE INDEX "ContractJob_createdBy_idx" ON "ContractJob"("createdBy");
-
--- CreateIndex
-CREATE INDEX "ContractJob_type_idx" ON "ContractJob"("type");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "UploadRecord_key_key" ON "UploadRecord"("key");

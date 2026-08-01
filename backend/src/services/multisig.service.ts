@@ -41,7 +41,132 @@ export interface MultisigTransactionDetails {
   updatedAt: Date;
 }
 
+/** Account signer entry with weight (from Horizon account thresholds). */
+export interface AccountSignerWeight {
+  publicKey: string;
+  weight: number;
+}
+
+/** Breakdown of signature collection progress relative to account thresholds. */
+export interface MultisigPayloadParseResult {
+  hash: string;
+  sourceAccount: string | null;
+  networkPassphrase: string;
+  signaturesPresent: Array<{
+    publicKey: string | null;
+    hint: string;
+    weight: number;
+  }>;
+  collectedWeight: number;
+  requiredThreshold: number;
+  missingWeight: number;
+  thresholdMet: boolean;
+  signedKeys: string[];
+  missingSigners: Array<{
+    publicKey: string;
+    weight: number;
+  }>;
+}
+
 class MultisigService {
+  /**
+   * Parse a base64 XDR transaction envelope and compute signature collection status
+   * against the account's signer weights and a medium/high/low threshold.
+   *
+   * @param envelopeXdr - Base64-encoded TransactionEnvelope XDR
+   * @param accountSigners - Signers and weights for the source account
+   * @param requiredThreshold - Weight threshold that must be reached (e.g. med_threshold)
+   * @param networkPassphrase - Stellar network passphrase (defaults to TESTNET)
+   */
+  parseTransactionPayload(
+    envelopeXdr: string,
+    accountSigners: AccountSignerWeight[],
+    requiredThreshold: number,
+    networkPassphrase: string = StellarSdk.Networks.TESTNET
+  ): MultisigPayloadParseResult {
+    if (!envelopeXdr || typeof envelopeXdr !== 'string') {
+      throw new Error('envelopeXdr is required');
+    }
+    if (!Array.isArray(accountSigners) || accountSigners.length === 0) {
+      throw new Error('accountSigners must include at least one signer');
+    }
+    if (!Number.isFinite(requiredThreshold) || requiredThreshold < 1) {
+      throw new Error('requiredThreshold must be a positive number');
+    }
+
+    let transaction: StellarSdk.Transaction | StellarSdk.FeeBumpTransaction;
+    try {
+      transaction = StellarSdk.TransactionBuilder.fromXDR(envelopeXdr, networkPassphrase);
+    } catch {
+      throw new Error('Invalid transaction envelope XDR');
+    }
+
+    const inner =
+      transaction instanceof StellarSdk.FeeBumpTransaction
+        ? transaction.innerTransaction
+        : (transaction as StellarSdk.Transaction);
+
+    const hash = inner.hash().toString('hex');
+    const sourceAccount =
+      typeof (inner as StellarSdk.Transaction).source === 'string'
+        ? (inner as StellarSdk.Transaction).source
+        : null;
+
+    const signerByHint = new Map<string, AccountSignerWeight>();
+    for (const signer of accountSigners) {
+      try {
+        const keypair = StellarSdk.Keypair.fromPublicKey(signer.publicKey);
+        const hint = Buffer.from(keypair.rawPublicKey().slice(-4)).toString('hex');
+        signerByHint.set(hint, signer);
+      } catch {
+        // Skip malformed public keys
+      }
+    }
+
+    const signaturesPresent: MultisigPayloadParseResult['signaturesPresent'] = [];
+    const signedKeys = new Set<string>();
+    let collectedWeight = 0;
+
+    for (const decorated of inner.signatures) {
+      const hintHex = Buffer.from(decorated.hint()).toString('hex');
+      const matched = signerByHint.get(hintHex);
+      if (matched && !signedKeys.has(matched.publicKey)) {
+        signedKeys.add(matched.publicKey);
+        collectedWeight += matched.weight;
+        signaturesPresent.push({
+          publicKey: matched.publicKey,
+          hint: hintHex,
+          weight: matched.weight,
+        });
+      } else {
+        signaturesPresent.push({
+          publicKey: matched?.publicKey ?? null,
+          hint: hintHex,
+          weight: matched?.weight ?? 0,
+        });
+      }
+    }
+
+    const missingSigners = accountSigners
+      .filter((s) => s.weight > 0 && !signedKeys.has(s.publicKey))
+      .map((s) => ({ publicKey: s.publicKey, weight: s.weight }));
+
+    const missingWeight = Math.max(0, requiredThreshold - collectedWeight);
+
+    return {
+      hash,
+      sourceAccount,
+      networkPassphrase,
+      signaturesPresent,
+      collectedWeight,
+      requiredThreshold,
+      missingWeight,
+      thresholdMet: collectedWeight >= requiredThreshold,
+      signedKeys: Array.from(signedKeys),
+      missingSigners,
+    };
+  }
+
   /**
    * Create a new multisig transaction
    */

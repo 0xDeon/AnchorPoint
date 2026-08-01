@@ -14,7 +14,6 @@ import { config } from '../../config/env';
 type UploadedFiles = { [fieldname: string]: Array<{ path: string }> };
 
 const ALLOWED_CONTENT_TYPES = (process.env.UPLOAD_ALLOWED_CONTENT_TYPES ?? 'image/jpeg,image/png,application/pdf').split(',');
-const UPLOAD_URL_EXPIRY_SECONDS = parseInt(process.env.UPLOAD_URL_EXPIRY_SECONDS ?? '900', 10);
 const KEY_PREFIX = process.env.STORAGE_KEY_PREFIX ?? 'kyc';
 const UPLOAD_ID_SUFFIX = '_upload_id';
 const pack = (enc?: { encryptedData: string; iv: string } | null) =>
@@ -389,10 +388,10 @@ export class Sep12Controller {
           });
         }
 
-        const expiresAt = new Date(Date.now() + UPLOAD_URL_EXPIRY_SECONDS * 1000);
+        const expiresAt = new Date(Date.now() + config.UPLOAD_URL_EXPIRY_SECONDS * 1000);
         const record = uploadStore.create(account, field_name, content_type, expiresAt);
 
-        const url = await storageProvider.generatePresignedPutUrl(record.storageKey, content_type, UPLOAD_URL_EXPIRY_SECONDS);
+        const url = await storageProvider.generatePresignedPutUrl(record.storageKey, content_type, config.UPLOAD_URL_EXPIRY_SECONDS);
 
         logger.info('SEP-12 upload-url issued', { account, field_name, uploadId: record.uploadId });
 

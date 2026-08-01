@@ -7,6 +7,8 @@ use soroban_sdk::{contract, contractimpl, contracttype, Address, Env};
 pub enum DataKey {
     SuperAdmin,
     IsPaused,
+    /// Pause status per individual registered contract
+    ContractPaused(Address),
 }
 
 #[contract]
@@ -20,6 +22,12 @@ impl SecurityRegistry {
         }
         env.storage().instance().set(&DataKey::SuperAdmin, &admin);
         env.storage().instance().set(&DataKey::IsPaused, &false);
+
+        anchorpoint_utils::storage::extend_instance_ttl(
+            &env,
+            anchorpoint_utils::storage::INSTANCE_THRESHOLD,
+            anchorpoint_utils::storage::INSTANCE_EXTEND_TO,
+        );
     }
 
     pub fn pause(env: Env, admin: Address) {
@@ -33,6 +41,12 @@ impl SecurityRegistry {
             panic!("not super admin");
         }
         env.storage().instance().set(&DataKey::IsPaused, &true);
+
+        anchorpoint_utils::storage::extend_instance_ttl(
+            &env,
+            anchorpoint_utils::storage::INSTANCE_THRESHOLD,
+            anchorpoint_utils::storage::INSTANCE_EXTEND_TO,
+        );
     }
 
     pub fn unpause(env: Env, admin: Address) {
@@ -46,6 +60,12 @@ impl SecurityRegistry {
             panic!("not super admin");
         }
         env.storage().instance().set(&DataKey::IsPaused, &false);
+
+        anchorpoint_utils::storage::extend_instance_ttl(
+            &env,
+            anchorpoint_utils::storage::INSTANCE_THRESHOLD,
+            anchorpoint_utils::storage::INSTANCE_EXTEND_TO,
+        );
     }
 
     pub fn is_paused(env: Env) -> bool {
@@ -54,12 +74,56 @@ impl SecurityRegistry {
             .get(&DataKey::IsPaused)
             .unwrap_or(false)
     }
+
+    // -------------------------------------------------------------------------
+    // Per-contract pause registry
+    // -------------------------------------------------------------------------
+
+    /// Pause a specific registered contract.
+    pub fn pause_contract(env: Env, admin: Address, contract_id: Address) {
+        admin.require_auth();
+        let stored_admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::SuperAdmin)
+            .expect("not initialized");
+        if admin != stored_admin {
+            panic!("not super admin");
+        }
+        env.storage()
+            .persistent()
+            .set(&DataKey::ContractPaused(contract_id), &true);
+    }
+
+    /// Unpause a specific registered contract.
+    pub fn unpause_contract(env: Env, admin: Address, contract_id: Address) {
+        admin.require_auth();
+        let stored_admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::SuperAdmin)
+            .expect("not initialized");
+        if admin != stored_admin {
+            panic!("not super admin");
+        }
+        env.storage()
+            .persistent()
+            .set(&DataKey::ContractPaused(contract_id), &false);
+    }
+
+    /// Read-only query returning whether a specific contract is paused.
+    pub fn is_contract_paused(env: Env, contract_id: Address) -> bool {
+        env.storage()
+            .persistent()
+            .get(&DataKey::ContractPaused(contract_id))
+            .unwrap_or(false)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::testutils::{storage::Instance as _, Address as _};
 
     #[test]
     fn test_pause_unpause() {
@@ -71,11 +135,95 @@ mod tests {
         client.initialize(&admin);
         assert!(!client.is_paused());
 
+        let initial_ttl = env.as_contract(&contract_id, || env.storage().instance().get_ttl());
+        assert!(initial_ttl >= anchorpoint_utils::storage::INSTANCE_EXTEND_TO);
+
         env.mock_all_auths();
         client.pause(&admin);
         assert!(client.is_paused());
 
         client.unpause(&admin);
         assert!(!client.is_paused());
+
+        let pause_ttl = env.as_contract(&contract_id, || env.storage().instance().get_ttl());
+        assert!(pause_ttl >= anchorpoint_utils::storage::INSTANCE_EXTEND_TO);
+
+        client.unpause(&admin);
+        assert!(!client.is_paused());
+
+        let unpause_ttl = env.as_contract(&contract_id, || env.storage().instance().get_ttl());
+        assert!(unpause_ttl >= anchorpoint_utils::storage::INSTANCE_EXTEND_TO);
+    }
+
+    #[test]
+    fn test_is_contract_paused_default_false() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let registry_id = env.register(SecurityRegistry, ());
+        let client = SecurityRegistryClient::new(&env, &registry_id);
+        client.initialize(&admin);
+
+        let some_contract = Address::generate(&env);
+        assert_eq!(client.is_contract_paused(&some_contract), false);
+    }
+
+    #[test]
+    fn test_pause_and_query_specific_contract() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let registry_id = env.register(SecurityRegistry, ());
+        let client = SecurityRegistryClient::new(&env, &registry_id);
+        client.initialize(&admin);
+
+        let target = Address::generate(&env);
+        let other = Address::generate(&env);
+
+        assert_eq!(client.is_contract_paused(&target), false);
+
+        client.pause_contract(&admin, &target);
+        assert_eq!(client.is_contract_paused(&target), true);
+        // Other contract must remain unaffected
+        assert_eq!(client.is_contract_paused(&other), false);
+
+        client.unpause_contract(&admin, &target);
+        assert_eq!(client.is_contract_paused(&target), false);
+    }
+
+    #[test]
+    fn test_is_contract_paused_default_false() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let registry_id = env.register(SecurityRegistry, ());
+        let client = SecurityRegistryClient::new(&env, &registry_id);
+        client.initialize(&admin);
+
+        let some_contract = Address::generate(&env);
+        assert_eq!(client.is_contract_paused(&some_contract), false);
+    }
+
+    #[test]
+    fn test_pause_and_query_specific_contract() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let registry_id = env.register(SecurityRegistry, ());
+        let client = SecurityRegistryClient::new(&env, &registry_id);
+        client.initialize(&admin);
+
+        let target = Address::generate(&env);
+        let other = Address::generate(&env);
+
+        assert_eq!(client.is_contract_paused(&target), false);
+
+        client.pause_contract(&admin, &target);
+        assert_eq!(client.is_contract_paused(&target), true);
+        // Other contract must remain unaffected
+        assert_eq!(client.is_contract_paused(&other), false);
+
+        client.unpause_contract(&admin, &target);
+        assert_eq!(client.is_contract_paused(&target), false);
     }
 }

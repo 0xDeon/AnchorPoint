@@ -15,10 +15,29 @@ jest.mock('../../lib/prisma', () => ({
     quote: {
       findUnique: jest.fn(),
     },
+    transaction: {
+      findFirst: jest.fn(),
+      update: jest.fn(),
+    },
   },
 }));
 
+jest.mock('../../services/sep24.service', () => {
+  const actual = jest.requireActual('../../services/sep24.service');
+  return {
+    ...actual,
+    Sep24Service: {
+      ...actual.Sep24Service,
+      storeCallback: jest.fn().mockResolvedValue(undefined),
+      getCallback: jest.fn(),
+      notifyStatusChange: jest.fn(),
+      validateCallbackUrl: actual.Sep24Service.validateCallbackUrl,
+    },
+  };
+});
+
 import sep24Router from './sep24.route';
+import { Sep24Service } from '../../services/sep24.service';
 
 jest.setTimeout(15000);
 
@@ -32,6 +51,8 @@ describe('SEP-24 Routes', () => {
 
   beforeEach(() => {
     process.env.INTERACTIVE_URL = baseUrl;
+    jest.clearAllMocks();
+    (Sep24Service.storeCallback as jest.Mock).mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -208,4 +229,146 @@ describe('SEP-24 Routes', () => {
       expect(res.body.error).toBe('invalid on_change_callback domain');
     });
   });
+
+  describe('GET /transaction', () => {
+    it('returns 400 when no query parameters are supplied', async () => {
+      const res = await request(app).get('/transaction');
+      expect(res.statusCode).toBe(400);
+      expect(res.body.error).toContain('One of id, stellar_transaction_id, or external_transaction_id is required');
+    });
+
+    it('returns 404 when transaction is not found', async () => {
+      const prisma = require('../../lib/prisma').default;
+      prisma.transaction.findFirst.mockResolvedValueOnce(null);
+
+      const res = await request(app).get('/transaction?id=nonexistent-id');
+      expect(res.statusCode).toBe(404);
+      expect(res.body.error).toBe('Transaction not found');
+    });
+
+    it('returns 400 when stellar transaction hash is missing', async () => {
+      const prisma = require('../../lib/prisma').default;
+      prisma.transaction.findFirst.mockResolvedValueOnce({
+        id: 'tx-123',
+        type: 'DEPOSIT',
+        status: 'PENDING',
+        amount: '10.00',
+        assetCode: 'USDC',
+        stellarTxId: null,
+        externalId: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+
+      const res = await request(app).get('/transaction?id=tx-123');
+      expect(res.statusCode).toBe(400);
+      expect(res.body.error).toBe('Stellar transaction hash is missing or invalid');
+    });
+
+    it('returns 200 with transaction details when stellar transaction hash is present', async () => {
+      const prisma = require('../../lib/prisma').default;
+      const createdAt = new Date();
+      prisma.transaction.findFirst.mockResolvedValueOnce({
+        id: 'tx-123',
+        type: 'DEPOSIT',
+        status: 'COMPLETED',
+        amount: '50.00',
+        assetCode: 'USDC',
+        stellarTxId: 'hash-123456789',
+        externalId: 'ext-999',
+        createdAt,
+        updatedAt: createdAt,
+      });
+
+      const res = await request(app).get('/transaction?id=tx-123');
+      expect(res.statusCode).toBe(200);
+      expect(res.body.transaction).toBeDefined();
+      expect(res.body.transaction.id).toBe('tx-123');
+      expect(res.body.transaction.stellar_transaction_id).toBe('hash-123456789');
+    });
+  });
+
+  describe('PATCH /transactions/:id/status', () => {
+    it('returns 400 when status is missing', async () => {
+      const res = await request(app)
+        .patch('/transactions/tx-1/status')
+        .send({});
+
+      expect(res.statusCode).toBe(400);
+      expect(res.body.error).toBe('status is required');
+    });
+
+    it('returns 404 when no partner callback is configured', async () => {
+      (Sep24Service.getCallback as jest.Mock).mockResolvedValueOnce(null);
+
+      const res = await request(app)
+        .patch('/transactions/tx-1/status')
+        .send({ status: 'completed' });
+
+      expect(res.statusCode).toBe(404);
+      expect(res.body.error).toContain('No partner callback');
+    });
+
+    it('notifies partner webhook with idempotent delivery result', async () => {
+      (Sep24Service.getCallback as jest.Mock).mockResolvedValueOnce({
+        callbackUrl: 'https://partner.example/hook',
+        kind: 'deposit',
+        assetCode: 'USDC',
+        amount: '10',
+      });
+      (Sep24Service.notifyStatusChange as jest.Mock).mockResolvedValueOnce({
+        delivered: true,
+        attempts: 1,
+        statusCode: 200,
+        idempotencyKey: 'sep24:tx-1:pending_user->completed',
+      });
+      const prisma = require('../../lib/prisma').default;
+      prisma.transaction.update.mockResolvedValueOnce({
+        id: 'tx-1',
+        amount: '10',
+        assetCode: 'USDC',
+        stellarTxId: null,
+        externalId: null,
+      });
+
+      const res = await request(app)
+        .patch('/transactions/tx-1/status')
+        .send({ status: 'completed', previous_status: 'pending_user' });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.body.webhook.delivered).toBe(true);
+      expect(res.body.webhook.idempotencyKey).toBe(
+        'sep24:tx-1:pending_user->completed'
+      );
+      expect(Sep24Service.notifyStatusChange).toHaveBeenCalledWith(
+        expect.objectContaining({
+          transactionId: 'tx-1',
+          kind: 'deposit',
+          previousStatus: 'pending_user',
+          nextStatus: 'completed',
+          callbackUrl: 'https://partner.example/hook',
+        })
+      );
+    });
+
+    it('stores partner callback on interactive deposit', async () => {
+      const res = await request(app)
+        .post('/transactions/deposit/interactive')
+        .send({
+          asset_code: 'USDC',
+          on_change_callback: 'https://partner.example/hook',
+        });
+
+      expect(res.statusCode).toBe(200);
+      expect(Sep24Service.storeCallback).toHaveBeenCalledWith(
+        '00000000-0000-0000-0000-000000000000',
+        expect.objectContaining({
+          callbackUrl: 'https://partner.example/hook',
+          kind: 'deposit',
+          assetCode: 'USDC',
+        })
+      );
+    });
+  });
 });
+
