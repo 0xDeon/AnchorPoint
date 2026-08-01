@@ -20,6 +20,12 @@ impl SecurityRegistry {
         }
         env.storage().instance().set(&DataKey::SuperAdmin, &admin);
         env.storage().instance().set(&DataKey::IsPaused, &false);
+
+        anchorpoint_utils::storage::extend_instance_ttl(
+            &env,
+            anchorpoint_utils::storage::INSTANCE_THRESHOLD,
+            anchorpoint_utils::storage::INSTANCE_EXTEND_TO,
+        );
     }
 
     pub fn pause(env: Env, admin: Address) {
@@ -33,6 +39,12 @@ impl SecurityRegistry {
             panic!("not super admin");
         }
         env.storage().instance().set(&DataKey::IsPaused, &true);
+
+        anchorpoint_utils::storage::extend_instance_ttl(
+            &env,
+            anchorpoint_utils::storage::INSTANCE_THRESHOLD,
+            anchorpoint_utils::storage::INSTANCE_EXTEND_TO,
+        );
     }
 
     pub fn unpause(env: Env, admin: Address) {
@@ -46,6 +58,12 @@ impl SecurityRegistry {
             panic!("not super admin");
         }
         env.storage().instance().set(&DataKey::IsPaused, &false);
+
+        anchorpoint_utils::storage::extend_instance_ttl(
+            &env,
+            anchorpoint_utils::storage::INSTANCE_THRESHOLD,
+            anchorpoint_utils::storage::INSTANCE_EXTEND_TO,
+        );
     }
 
     pub fn is_paused(env: Env) -> bool {
@@ -59,7 +77,7 @@ impl SecurityRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::testutils::{storage::Instance as _, Address as _};
 
     #[test]
     fn test_pause_unpause() {
@@ -69,13 +87,22 @@ mod tests {
         let client = SecurityRegistryClient::new(&env, &contract_id);
 
         client.initialize(&admin);
-        assert_eq!(client.is_paused(), false);
+        assert!(!client.is_paused());
+
+        let initial_ttl = env.as_contract(&contract_id, || env.storage().instance().get_ttl());
+        assert!(initial_ttl >= anchorpoint_utils::storage::INSTANCE_EXTEND_TO);
 
         env.mock_all_auths();
         client.pause(&admin);
-        assert_eq!(client.is_paused(), true);
+        assert!(client.is_paused());
+
+        let pause_ttl = env.as_contract(&contract_id, || env.storage().instance().get_ttl());
+        assert!(pause_ttl >= anchorpoint_utils::storage::INSTANCE_EXTEND_TO);
 
         client.unpause(&admin);
-        assert_eq!(client.is_paused(), false);
+        assert!(!client.is_paused());
+
+        let unpause_ttl = env.as_contract(&contract_id, || env.storage().instance().get_ttl());
+        assert!(unpause_ttl >= anchorpoint_utils::storage::INSTANCE_EXTEND_TO);
     }
 }

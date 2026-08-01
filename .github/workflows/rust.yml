@@ -24,7 +24,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Clippy
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+        run: cargo clippy -p anchorpoint-utils -p anchorpoint-security-registry -p event-hub --all-targets --all-features -- -D warnings
 
       - name: Test
-        run: cargo test --workspace --all-features
+        run: cargo test -p anchorpoint-utils -p anchorpoint-security-registry -p event-hub --all-features

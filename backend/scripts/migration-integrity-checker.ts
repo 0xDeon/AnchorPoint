@@ -1,8 +1,8 @@
 #!/usr/bin/env ts-node
 
 import { execSync } from 'child_process';
-import * as fs from 'fs';
-import * as path from 'path';
+import fs from 'fs';
+import path from 'path';
 
 interface MigrationCheck {
   name: string;
