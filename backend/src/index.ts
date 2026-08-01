@@ -2,7 +2,7 @@ import http from 'http';
 import express, { Request, Response } from 'express';
 import cors from 'cors';
 import swaggerUi from 'swagger-ui-express';
-import { config } from './config/env';
+import { config, hydrateEncryptedConfigSecrets } from './config/env';
 import { swaggerSpec } from './config/swagger';
 import logger from './utils/logger';
 import transactionsRouter from './api/routes/transactions.route';
@@ -33,7 +33,7 @@ import { publicLimiter, authLimiter } from './api/middleware/rate-limit.middlewa
 import { notificationService } from './services/notification.service';
 import { createEmailProvider, ConsoleSmsProvider, FcmPushProvider } from './lib/notifications/providers';
 import { NotificationType } from './services/notification.service';
-import { validateKmsConfigOnStartup } from './lib/key-management.service';
+import { validateKmsConfigOnStartup, verifyDecryptionCapabilityOnStartup } from './lib/key-management.service';
 import queueDashboardRouter from './api/routes/queue-dashboard.route';
 import prisma from './lib/prisma';
 import { redis } from './lib/redis';
@@ -342,6 +342,19 @@ app.use(errorHandler);
 
 /* istanbul ignore next */
 if (process.env.NODE_ENV !== 'test') {
+  (async () => {
+    validateKmsConfigOnStartup(config);
+    await hydrateEncryptedConfigSecrets();
+    const decryptionOk = await verifyDecryptionCapabilityOnStartup({
+      NODE_ENV: config.NODE_ENV,
+      DATABASE_URL: process.env.DATABASE_URL,
+      JWT_SECRET: process.env.JWT_SECRET,
+      ANCHOR_SECRET_KEY: process.env.ANCHOR_SECRET_KEY,
+      STELLAR_DISTRIBUTION_SECRET: process.env.STELLAR_DISTRIBUTION_SECRET,
+      STELLAR_FEE_BUMP_SECRET: process.env.STELLAR_FEE_BUMP_SECRET,
+      RELAYER_SECRET_KEY: process.env.RELAYER_SECRET_KEY,
+      WEBHOOK_SECRET: process.env.WEBHOOK_SECRET,
+      SIGNING_KEY: process.env.SIGNING_KEY,
   validateKmsConfigOnStartup(config);
   validateStorageConfigOnStartup();
 
@@ -360,6 +373,28 @@ if (process.env.NODE_ENV !== 'test') {
         kycExpiryScheduler.start();
       });
     });
+    if (!decryptionOk && config.NODE_ENV === 'production') {
+      logger.error('Aborting startup: encrypted config secrets could not be decrypted');
+      process.exit(1);
+    }
+    validateStorageConfigOnStartup();
+
+    configService.initialize()
+      .catch((error) => {
+        logger.error('Failed to initialize config service:', error);
+      })
+      .finally(() => {
+        app.listen(PORT, () => {
+          logger.info(`Backend service listening at http://localhost:${PORT}`);
+          logger.info(`API Documentation available at http://localhost:${PORT}/api-docs`);
+          feeReportScheduler.start();
+          uploadExpiryScheduler.start();
+        });
+      });
+  })().catch((error) => {
+    logger.error('Fatal startup error during secret hydration:', error);
+    process.exit(1);
+  });
 }
 
 export default app;
