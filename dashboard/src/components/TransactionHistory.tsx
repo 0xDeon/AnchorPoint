@@ -8,10 +8,12 @@ import {
   Search,
   ChevronLeft,
   ChevronRight,
+  Printer,
 } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { TransactionStatusBadge } from './TransactionStatusBadge';
 import type { TransactionStatus } from './TransactionStatusBadge';
+import { TransactionReceipt } from './TransactionReceipt';
 
 type TransactionType = 'Deposit' | 'Withdrawal';
 type SortKey = 'type' | 'asset' | 'amount' | 'status' | 'date';
@@ -26,6 +28,8 @@ interface Transaction {
   status: TransactionStatus;
   date: string;
   reference: string;
+  fees?: number;
+  anchorSignature?: string;
 }
 
 const ALL_TRANSACTIONS: Transaction[] = Array.from({ length: 5000 }, (_, i) => {
@@ -46,6 +50,8 @@ const ALL_TRANSACTIONS: Transaction[] = Array.from({ length: 5000 }, (_, i) => {
     status,
     date: dateObj.toISOString().split('T')[0],
     reference: `REF-${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
+    fees: status === 'Completed' ? parseFloat((amount * 0.01).toFixed(2)) : undefined,
+    anchorSignature: status === 'Completed' ? `SIG-${Math.random().toString(36).substring(2, 10).toUpperCase()}` : undefined,
   };
 });
 
@@ -80,6 +86,7 @@ export const TransactionHistory = ({ socketUpdate }: TransactionHistoryProps) =>
   const [sortKey, setSortKey] = useState<SortKey>('date');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   const [isLoading, setIsLoading] = useState(true);
+  const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);
   const [transactions, setTransactions] = useState<Transaction[]>(ALL_TRANSACTIONS);
   const parentRef = useRef<HTMLDivElement | null>(null);
 
@@ -176,6 +183,11 @@ export const TransactionHistory = ({ socketUpdate }: TransactionHistoryProps) =>
 
   const statusOptions: Array<TransactionStatus | 'All'> = ['All', 'Completed', 'Pending', 'Processing', 'Failed', 'Cancelled'];
 
+  const handlePrintReceipt = useCallback((tx: Transaction) => {
+    setSelectedTransaction(tx);
+    setTimeout(() => window.print(), 100);
+  }, []);
+
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -245,6 +257,19 @@ export const TransactionHistory = ({ socketUpdate }: TransactionHistoryProps) =>
         </div>
       </div>
 
+      {selectedTransaction && (
+        <TransactionReceipt
+          transaction={selectedTransaction}
+          onPrint={() => window.print()}
+        />
+      )}
+
+      <div className="glass-card overflow-x-auto">
+        <table className="responsive-table w-full text-left" aria-label="Transaction history">
+          <caption className="sr-only">
+            Transaction history — {sorted.length} result{sorted.length !== 1 ? 's' : ''}
+          </caption>
+          <thead>
       <div className="glass-card overflow-hidden">
         <div ref={parentRef} className="max-h-[720px] overflow-y-auto">
           <table className="responsive-table w-full text-left" aria-label="Transaction history">
@@ -274,6 +299,9 @@ export const TransactionHistory = ({ socketUpdate }: TransactionHistoryProps) =>
               <th scope="col" className="p-4 font-medium text-slate-400">
                 Reference
               </th>
+              <th scope="col" className="p-4 font-medium text-slate-400">
+                Actions
+              </th>
             </tr>
           </thead>
           <tbody style={{ height: virtualizer.getTotalSize() }} className="relative">
@@ -298,11 +326,14 @@ export const TransactionHistory = ({ socketUpdate }: TransactionHistoryProps) =>
                   <td className="p-4">
                     <div className="h-4 w-24 animate-pulse rounded bg-slate-800" />
                   </td>
+                  <td className="p-4">
+                    <div className="h-8 w-20 animate-pulse rounded bg-slate-800" />
+                  </td>
                 </tr>
               ))
             ) : paginated.length === 0 ? (
               <tr>
-                <td colSpan={6} className="p-8 text-center text-slate-400">
+                <td colSpan={7} className="p-8 text-center text-slate-400">
                   No transactions match your filters.
                 </td>
               </tr>
@@ -326,6 +357,19 @@ export const TransactionHistory = ({ socketUpdate }: TransactionHistoryProps) =>
                     <time dateTime={tx.date}>{tx.date}</time>
                   </td>
                   <td className="p-4 font-mono text-xs text-slate-500" data-label="Reference">{tx.reference}</td>
+                  <td className="p-4" data-label="Actions">
+                    {tx.status === 'Completed' && (
+                      <button
+                        type="button"
+                        onClick={() => handlePrintReceipt(tx)}
+                        className="action-button inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-800/50 px-2.5 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-text"
+                        aria-label={`Print receipt for transaction ${tx.id}`}
+                      >
+                        <Printer size={14} aria-hidden="true" />
+                        Receipt
+                      </button>
+                    )}
+                  </td>
                 </tr>
               ))
             )}

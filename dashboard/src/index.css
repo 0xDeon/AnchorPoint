@@ -177,3 +177,53 @@
     color: rgb(100 116 139);
   }
 }
+
+@media print {
+  body {
+    background: #ffffff;
+    color: #000000;
+  }
+
+  nav,
+  header,
+  .no-print,
+  [data-testid="sidebar"],
+  [data-testid="backend-status"],
+  button,
+  select,
+  input {
+    display: none !important;
+  }
+
+  main,
+  section,
+  .glass-card,
+  .receipt-print {
+    border: none !important;
+    box-shadow: none !important;
+    background: transparent !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  .receipt-print {
+    color: #000000;
+    font-family: Inter, sans-serif;
+  }
+
+  .receipt-print table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  .receipt-print th,
+  .receipt-print td {
+    border: 1px solid #000000;
+    padding: 0.5rem;
+    text-align: left;
+  }
+
+  .receipt-print th {
+    background: #f3f4f6;
+  }
+}
