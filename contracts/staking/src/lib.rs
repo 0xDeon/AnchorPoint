@@ -248,9 +248,10 @@ impl MultiTokenStaking {
     // ── Emergency Withdraw ─────────────────────────────────────────────────
 
     /// Withdraw entire stake directly when contract is paused, without reward updates.
+    /// This function is EXCLUSIVELY available when the contract is paused.
     pub fn emergency_withdraw(env: Env, user: Address) {
         user.require_auth();
-        assert!(Self::is_paused(env.clone()), "contract not paused");
+        Self::_require_paused(&env);
 
         let amount = Self::_stake_of(&env, &user);
         assert!(amount > 0, "no stake to withdraw");
@@ -417,7 +418,16 @@ impl MultiTokenStaking {
     // ── Internal helpers ──────────────────────────────────────────────────
 
     fn _check_not_paused(env: &Env) {
-        assert!(!Self::is_paused(env.clone()), "contract is paused");
+        if Self::is_paused(env.clone()) {
+            panic!("contract is paused");
+        }
+    }
+
+    /// Asserts that the contract IS paused (for emergency operations only).
+    fn _require_paused(env: &Env) {
+        if !Self::is_paused(env.clone()) {
+            panic!("contract not paused");
+        }
     }
 
     fn _update_rewards(env: &Env, user: &Address) {
@@ -647,5 +657,92 @@ mod tests {
         let client = MultiTokenStakingClient::new(&env, &contract_id);
         client.stake(&alice, &100_000);
         client.emergency_withdraw(&alice); // Should panic
+    }
+
+    // ── Comprehensive pause behavior tests (Issue #1001) ─────────────────
+
+    #[test]
+    #[should_panic(expected = "contract is paused")]
+    fn test_stake_blocked_when_paused() {
+        let (env, contract_id, admin, alice, _bob, _rwd1, _rwd2) = setup();
+        let client = MultiTokenStakingClient::new(&env, &contract_id);
+        client.pause(&admin);
+        client.stake(&alice, &100_000); // Must be blocked
+    }
+
+    #[test]
+    #[should_panic(expected = "contract is paused")]
+    fn test_claim_blocked_when_paused() {
+        let (env, contract_id, admin, alice, _bob, rwd1, _rwd2) = setup();
+        let client = MultiTokenStakingClient::new(&env, &contract_id);
+        client.stake(&alice, &100_000);
+        client.pause(&admin);
+        client.claim(&alice, &rwd1); // Must be blocked
+    }
+
+    #[test]
+    #[should_panic(expected = "contract is paused")]
+    fn test_claim_all_blocked_when_paused() {
+        let (env, contract_id, admin, alice, _bob, _rwd1, _rwd2) = setup();
+        let client = MultiTokenStakingClient::new(&env, &contract_id);
+        client.stake(&alice, &100_000);
+        client.pause(&admin);
+        client.claim_all(&alice); // Must be blocked
+    }
+
+    #[test]
+    #[should_panic(expected = "contract is paused")]
+    fn test_deposit_rewards_blocked_when_paused() {
+        let (env, contract_id, admin, _alice, _bob, rwd1, _rwd2) = setup();
+        let client = MultiTokenStakingClient::new(&env, &contract_id);
+        client.pause(&admin);
+        client.deposit_rewards(&admin, &rwd1, &1_000); // Must be blocked
+    }
+
+    #[test]
+    fn test_pause_and_unpause_cycle() {
+        let (env, contract_id, admin, alice, _bob, rwd1, _rwd2) = setup();
+        let client = MultiTokenStakingClient::new(&env, &contract_id);
+
+        // Operations succeed before pause
+        client.stake(&alice, &100_000);
+        assert_eq!(client.stake_of(&alice), 100_000);
+
+        // Pause the contract
+        client.pause(&admin);
+        assert!(client.is_paused());
+
+        // Emergency withdraw works only when paused
+        client.emergency_withdraw(&alice);
+        assert_eq!(client.stake_of(&alice), 0);
+
+        // Unpause restores normal operations
+        client.unpause(&admin);
+        assert!(!client.is_paused());
+
+        // Normal staking works again after unpause
+        client.stake(&alice, &50_000);
+        assert_eq!(client.stake_of(&alice), 50_000);
+    }
+
+    #[test]
+    fn test_emergency_withdraw_only_when_paused_full_flow() {
+        let (env, contract_id, admin, alice, bob, _rwd1, _rwd2) = setup();
+        let client = MultiTokenStakingClient::new(&env, &contract_id);
+
+        // Both users stake
+        client.stake(&alice, &300_000);
+        client.stake(&bob, &200_000);
+
+        // Admin pauses; emergency_withdraw works for both
+        client.pause(&admin);
+
+        client.emergency_withdraw(&alice);
+        assert_eq!(client.stake_of(&alice), 0);
+        assert_eq!(client.total_staked(), 200_000);
+
+        client.emergency_withdraw(&bob);
+        assert_eq!(client.stake_of(&bob), 0);
+        assert_eq!(client.total_staked(), 0);
     }
 }
