@@ -26,6 +26,12 @@ pub enum Error {
 
 const PRECISION: i128 = 1_000_000_000_000_000_000;
 
+/// Basis points denominator (10_000 = 100%).
+const MAX_BPS: i128 = 10_000;
+
+/// Default emergency-withdraw penalty in basis points (10% = 1_000 bps).
+const DEFAULT_EMERGENCY_FEE_BPS: i128 = 1_000;
+
 #[contracttype]
 pub enum DataKey {
     Admin,
@@ -45,6 +51,8 @@ pub enum DataKey {
     /// Ledger-sequence checkpoint of RewardPerTokenStored.
     /// Allows querying the accumulator value at past reward distributions.
     RewardPerTokenCheckpoint(u32),
+    /// Emergency-withdraw fee in basis points (default DEFAULT_EMERGENCY_FEE_BPS).
+    EmergencyFeeBps,
 }
 
 /// On-chain branding metadata for the contract.
@@ -110,6 +118,8 @@ impl LiquidStaking {
             website: String::from_str(&env, ""),
         });
         env.storage().instance().set(&DataKey::Paused, &false);
+        // Initialise the emergency fee penalty to the default (10%).
+        env.storage().instance().set(&DataKey::EmergencyFeeBps, &DEFAULT_EMERGENCY_FEE_BPS);
     }
 
     pub fn deposit_rewards(env: Env, from: Address, amount: i128) {
@@ -306,6 +316,11 @@ impl LiquidStaking {
     // ── Emergency Withdraw ─────────────────────────────────────────────────
 
     /// Withdraw entire stake directly when contract is paused, without reward updates.
+    ///
+    /// A fee penalty (`emergency_fee_bps` basis points, default 10%) is deducted
+    /// from the staked amount and sent to the admin (treasury). The net amount is
+    /// returned to the user. Both the net amount and the fee are included in the
+    /// emitted event for a complete audit trail.
     pub fn emergency_withdraw(env: Env, user: Address, token_id: u64) {
         user.require_auth();
         assert!(Self::is_paused(env.clone()), "contract not paused");
@@ -323,16 +338,47 @@ impl LiquidStaking {
         let amount: i128 = env.storage().persistent().get(&DataKey::StakeAmount(token_id)).unwrap_or(0);
         assert!(amount > 0, "no stake found for token");
 
-        // Update storage
+        // Calculate fee penalty and net withdrawal amount.
+        let fee_bps: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::EmergencyFeeBps)
+            .unwrap_or(DEFAULT_EMERGENCY_FEE_BPS);
+        let fee_penalty: i128 = amount
+            .checked_mul(fee_bps)
+            .unwrap_or_else(|| panic_with_error!(env, Error::RewardsOverflow))
+            / MAX_BPS;
+        let net_amount: i128 = amount
+            .checked_sub(fee_penalty)
+            .unwrap_or_else(|| panic_with_error!(env, Error::TotalStakedUnderflow));
+
+        // Update total staked
         let total: i128 = env.storage().instance().get(&DataKey::TotalStaked).unwrap_or(0);
         env.storage().instance().set(&DataKey::TotalStaked, &total.checked_sub(amount).expect("total staked underflow"));
 
         let stake_token: Address = env.storage().instance().get(&DataKey::StakeToken).unwrap();
-        token::Client::new(&env, &stake_token).transfer(
+        let token_client = token::Client::new(&env, &stake_token);
+
+        // Transfer net amount to user.
+        token_client.transfer(
             &env.current_contract_address(),
             &user,
-            &amount,
+            &net_amount,
         );
+
+        // Transfer fee penalty to admin (treasury).
+        if fee_penalty > 0 {
+            let admin: Address = env
+                .storage()
+                .instance()
+                .get(&DataKey::Admin)
+                .unwrap_or_else(|| panic_with_error!(env, Error::AdminNotFound));
+            token_client.transfer(
+                &env.current_contract_address(),
+                &admin,
+                &fee_penalty,
+            );
+        }
 
         env.storage().persistent().remove(&DataKey::StakeAmount(token_id));
         env.storage().persistent().remove(&DataKey::StakeLockTime(token_id));
@@ -346,7 +392,40 @@ impl LiquidStaking {
             (env.current_contract_address(), token_id).into_val(&env),
         );
 
-        env.events().publish((symbol_short!("emer_wd"),), (user, token_id, amount));
+        // Emit event including fee_penalty so callers can audit the deduction.
+        env.events().publish(
+            (symbol_short!("emer_wd"),),
+            (user, token_id, net_amount, fee_penalty),
+        );
+    }
+
+    /// Update the emergency-withdraw penalty fee (admin only).
+    ///
+    /// # Arguments
+    /// * `caller`   – Must be the contract admin
+    /// * `fee_bps`  – New fee in basis points (0–10_000)
+    pub fn set_emergency_fee(env: Env, caller: Address, fee_bps: i128) {
+        caller.require_auth();
+
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .unwrap_or_else(|| panic_with_error!(env, Error::AdminNotFound));
+        if caller != admin {
+            panic_with_error!(env, Error::OnlyAdmin);
+        }
+        assert!(fee_bps >= 0 && fee_bps <= MAX_BPS, "fee_bps out of range");
+
+        env.storage().instance().set(&DataKey::EmergencyFeeBps, &fee_bps);
+    }
+
+    /// Return the current emergency-withdraw fee in basis points.
+    pub fn get_emergency_fee(env: Env) -> i128 {
+        env.storage()
+            .instance()
+            .get(&DataKey::EmergencyFeeBps)
+            .unwrap_or(DEFAULT_EMERGENCY_FEE_BPS)
     }
 
     pub fn claim(env: Env, user: Address, token_id: u64) -> i128 {
@@ -790,17 +869,73 @@ mod tests {
         client.pause(&admin);
         assert!(client.is_paused());
 
-        // Try emergency withdraw - should work
+        // Try emergency withdraw - should work, with 10% fee penalty
         client.emergency_withdraw(&alice, &token_id);
         // Check stake is gone
         let after_info = client.get_stake_info(&token_id);
         assert_eq!(after_info.amount, 0);
-        // Check tokens returned
-        assert_eq!(token_client.balance(&alice), 1_000_000);
+        // Net amount returned = 500_000 - 10% = 450_000; fee = 50_000 goes to admin
+        assert_eq!(token_client.balance(&alice), 1_000_000 - 500_000 + 450_000); // 950_000
+        assert_eq!(token_client.balance(&admin), 50_000);
 
         // Unpause
         client.unpause(&admin);
         assert!(!client.is_paused());
+    }
+
+    // ── Emergency withdraw event emission tests (Issue #1000) ────────────
+
+    #[test]
+    fn test_emergency_withdraw_emits_event_with_fee_penalty() {
+        let (env, ls_id, _, admin, alice, _, _) = setup();
+        let client = LiquidStakingClient::new(&env, &ls_id);
+
+        let token_id = client.stake(&alice, &500_000, &3600);
+
+        // Pause and emergency withdraw
+        client.pause(&admin);
+
+        let events_before = env.events().all().len();
+        client.emergency_withdraw(&alice, &token_id);
+        let events_after = env.events().all().len();
+
+        // At least one new event must have been emitted
+        assert!(events_after > events_before, "emergency_withdraw must emit an event");
+
+        // Verify fee accounting: 10% fee on 500_000 = 50_000 penalty; net = 450_000
+        let stake_token = env.as_contract(&ls_id, || {
+            env.storage().instance().get(&DataKey::StakeToken).unwrap()
+        });
+        let token_client = TokenClient::new(&env, &stake_token);
+        // alice started with 1_000_000, staked 500_000, gets back net 450_000
+        assert_eq!(token_client.balance(&alice), 950_000, "net amount should be 90% of staked");
+        // admin receives the 10% fee penalty
+        assert_eq!(token_client.balance(&admin), 50_000, "admin should receive fee penalty");
+    }
+
+    #[test]
+    fn test_set_emergency_fee_and_withdraw() {
+        let (env, ls_id, _, admin, alice, _, _) = setup();
+        let client = LiquidStakingClient::new(&env, &ls_id);
+
+        // Default fee is 10% (1000 bps)
+        assert_eq!(client.get_emergency_fee(), 1_000);
+
+        // Admin changes fee to 5% (500 bps)
+        client.set_emergency_fee(&admin, &500);
+        assert_eq!(client.get_emergency_fee(), 500);
+
+        let token_id = client.stake(&alice, &500_000, &3600);
+        client.pause(&admin);
+        client.emergency_withdraw(&alice, &token_id);
+
+        let stake_token = env.as_contract(&ls_id, || {
+            env.storage().instance().get(&DataKey::StakeToken).unwrap()
+        });
+        let token_client = TokenClient::new(&env, &stake_token);
+        // Net = 500_000 - 5% = 475_000; fee = 25_000
+        assert_eq!(token_client.balance(&alice), 975_000); // 1_000_000 - 500_000 + 475_000
+        assert_eq!(token_client.balance(&admin), 25_000);
     }
 
     #[test]
