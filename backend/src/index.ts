@@ -13,6 +13,7 @@ import sep6Router from './api/routes/sep6.route';
 import sep38Router from './api/routes/sep38.route';
 import sep40Router from './api/routes/sep40.route';
 import infoRouter from './api/routes/info.route';
+import { getInfo } from './api/controllers/info.controller';
 import metricsRouter from './api/routes/metrics.route';
 import relayerRouter from './api/routes/relayer.route';
 import recurringPaymentsRouter from './api/routes/recurring-payments.route';
@@ -312,7 +313,8 @@ app.use('/api/relayer', relayerRouter);
 // SEP-40 Swap Rates API
 app.use('/sep40', sep40Router);
 
-// SEP-10 Auth routes
+// SEP-10 Auth routes (SEP-10 WEB_AUTH_ENDPOINT is /auth; /sep10 is kept for compatibility)
+app.use('/auth', authLimiter, authRouter);
 app.use('/sep10', authLimiter, authRouter);
 
 // SEP-12 KYC routes
@@ -331,6 +333,9 @@ const publicRoutes: Array<[string, express.Router]> = [
 publicRoutes.forEach(([path, router]) => {
   app.use(path, publicLimiter, router);
 });
+
+// SEP-1 stellar.toml at the well-known path
+app.get('/.well-known/stellar.toml', publicLimiter, getInfo);
 
 app.use('/api/recurring-payments', recurringPaymentsRouter);
 
