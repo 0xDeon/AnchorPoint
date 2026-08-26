@@ -125,13 +125,9 @@ impl MultiTokenStaking {
                 .set(&DataKey::RewardPerTokenStored(reward_token.clone()), &rpt);
         }
 
-        // Topic: event name only; from + amount in data.
-        env.events().publish(
-            symbol_short!("dep_rwd"),
-            (from, amount),
-            (symbol_short!("dep_rwd"), from, reward_token),
-            amount,
-        );
+        // Topic: event name only; from + reward_token + amount in data.
+        env.events()
+            .publish((symbol_short!("dep_rwd"),), (from.clone(), reward_token.clone(), amount));
     }
 
     // ── Staking ───────────────────────────────────────────────────────────
@@ -164,7 +160,7 @@ impl MultiTokenStaking {
             .set(&DataKey::TotalStaked, &total.checked_add(amount).expect("total staked overflow"));
 
         // Topic: event name only; user + amount in data.
-        env.events().publish(symbol_short!("staked"), (user, amount));
+        env.events().publish((symbol_short!("staked"),), (user, amount));
     }
 
     pub fn unstake(env: Env, user: Address, amount: i128) {
@@ -197,7 +193,7 @@ impl MultiTokenStaking {
         );
 
         // Topic: event name only; user + amount in data.
-        env.events().publish(symbol_short!("unstaked"), (user, amount));
+        env.events().publish((symbol_short!("unstaked"),), (user, amount));
     }
 
     // ── Claiming ──────────────────────────────────────────────────────────
@@ -207,17 +203,22 @@ impl MultiTokenStaking {
         user.require_auth();
         Self::_update_reward_for_token(&env, &user, &reward_token);
 
-        let reward: i128 = env
+        let accrued: i128 = env
             .storage()
             .persistent()
             .get(&DataKey::Rewards(user.clone(), reward_token.clone()))
             .unwrap_or(0);
 
-        if reward > 0 {
-            env.storage()
-                .persistent()
-                .set(&DataKey::Rewards(user.clone(), reward_token.clone()), &0_i128);
+        // Divide the scaled accrued amount into whole tokens and keep the
+        // sub-stroop remainder so it is not lost (and not locked up).
+        let reward = accrued / PRECISION;
+        let remainder = accrued % PRECISION;
 
+        env.storage()
+            .persistent()
+            .set(&DataKey::Rewards(user.clone(), reward_token.clone()), &remainder);
+
+        if reward > 0 {
             token::Client::new(&env, &reward_token).transfer(
                 &env.current_contract_address(),
                 &user,
@@ -225,7 +226,6 @@ impl MultiTokenStaking {
             );
 
             env.events()
-                .publish(symbol_short!("claimed"), (user, reward));
                 .publish((symbol_short!("claimed"), user, reward_token), reward);
         }
 
@@ -241,17 +241,21 @@ impl MultiTokenStaking {
             // Claim each one internally without separate require_auth since it's already done
             Self::_update_reward_for_token(&env, &user, &reward_token);
 
-            let reward: i128 = env
+            let accrued: i128 = env
                 .storage()
                 .persistent()
                 .get(&DataKey::Rewards(user.clone(), reward_token.clone()))
                 .unwrap_or(0);
 
-            if reward > 0 {
-                env.storage()
-                    .persistent()
-                    .set(&DataKey::Rewards(user.clone(), reward_token.clone()), &0_i128);
+            // Divide the scaled accrued amount and store the sub-stroop remainder.
+            let reward = accrued / PRECISION;
+            let remainder = accrued % PRECISION;
 
+            env.storage()
+                .persistent()
+                .set(&DataKey::Rewards(user.clone(), reward_token.clone()), &remainder);
+
+            if reward > 0 {
                 token::Client::new(&env, &reward_token).transfer(
                     &env.current_contract_address(),
                     &user,
@@ -260,7 +264,6 @@ impl MultiTokenStaking {
 
                 // Topic: event name only; user + reward in data.
                 env.events()
-                    .publish(symbol_short!("claimed"), (user.clone(), reward));
                     .publish((symbol_short!("claimed"), user.clone(), reward_token.clone()), reward);
             }
         }
@@ -286,7 +289,7 @@ impl MultiTokenStaking {
             .get(&DataKey::Rewards(user, reward_token))
             .unwrap_or(0);
 
-        accrued + stake.checked_mul(rpt - user_rpt).expect("rewards overflow") / PRECISION
+        (accrued + stake.checked_mul(rpt - user_rpt).expect("rewards overflow")) / PRECISION
     }
 
     pub fn total_staked(env: Env) -> i128 {
@@ -332,9 +335,13 @@ impl MultiTokenStaking {
             .unwrap_or(0);
 
         let stake = Self::_stake_of(env, user);
-        let earned = stake.checked_mul(rpt - user_rpt).expect("rewards overflow") / PRECISION;
+        // Keep the accrued value in scaled (fixed-point) form so that sub-stroop
+        // fractional remainders are not truncated away on every update. Only the
+        // final claim divides by PRECISION and stores the leftover remainder back,
+        // which prevents reward tokens from being permanently locked up.
+        let delta = stake.checked_mul(rpt - user_rpt).expect("rewards overflow");
 
-        if earned > 0 {
+        if delta > 0 {
             let prev: i128 = env
                 .storage()
                 .persistent()
@@ -342,7 +349,7 @@ impl MultiTokenStaking {
                 .unwrap_or(0);
             env.storage()
                 .persistent()
-                .set(&DataKey::Rewards(user.clone(), reward_token.clone()), &prev.checked_add(earned).expect("rewards overflow"));
+                .set(&DataKey::Rewards(user.clone(), reward_token.clone()), &prev.checked_add(delta).expect("rewards overflow"));
         }
 
         // Snapshot current global rate for this user
@@ -456,5 +463,35 @@ mod tests {
 
         assert_eq!(client.pending_rewards(&alice, &rwd1), 1_500);
         assert_eq!(client.pending_rewards(&bob, &rwd1), 500);
+    }
+
+    #[test]
+    fn test_sub_stroop_remainder_accrual() {
+        let (env, contract_id, admin, alice, bob, rwd1, _) = setup();
+        let client = MultiTokenStakingClient::new(&env, &contract_id);
+        let rwd1_client = TokenClient::new(&env, &rwd1);
+
+        // Two equal stakers: total stake of 2, rewards of 1 stroop each deposit.
+        // Each deposit accrues 0.5 stroop per user which truncates to 0 when naively
+        // divided, so the remainder must be preserved across updates.
+        client.stake(&alice, &1);
+        client.stake(&bob, &1);
+
+        client.deposit_rewards(&admin, &rwd1, &1);
+        client.deposit_rewards(&admin, &rwd1, &1);
+
+        // Each user should have accrued exactly 1 whole stroop after both deposits.
+        assert_eq!(client.pending_rewards(&alice, &rwd1), 1);
+        assert_eq!(client.pending_rewards(&bob, &rwd1), 1);
+
+        client.claim(&alice, &rwd1);
+        client.claim(&bob, &rwd1);
+
+        assert_eq!(rwd1_client.balance(&alice), 1);
+        assert_eq!(rwd1_client.balance(&bob), 1);
+
+        // No rewards should remain locked in the contract for this token.
+        assert_eq!(client.pending_rewards(&alice, &rwd1), 0);
+        assert_eq!(client.pending_rewards(&bob, &rwd1), 0);
     }
 }

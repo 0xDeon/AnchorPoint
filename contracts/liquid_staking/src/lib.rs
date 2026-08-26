@@ -1,8 +1,10 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, token, Address, Env, String, Vec, IntoVal, Map, Symbol
+    contract, contracterror, contractimpl, contracttype, symbol_short, token, Address, Env, String, Vec, IntoVal, Map, Symbol
 };
+
+use reentrancy_guard::ReentrancyGuard;
 
 const PRECISION: i128 = 1_000_000_000_000_000_000;
 
@@ -20,6 +22,14 @@ pub enum DataKey {
     NftRewards(u64),              // NFT ID -> Accrued rewards
     /// Branding / project metadata (description, icon_url, website)
     ContractMeta,
+}
+
+/// Contract-level errors.
+#[contracterror]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Error {
+    /// A recursive (re-entrant) call was detected on a guarded function.
+    ReentrancyDetected = 1,
 }
 
 /// On-chain branding metadata for the contract.
@@ -116,7 +126,7 @@ impl LiquidStaking {
         }
 
         // Topic: event name only; from + amount in data.
-        env.events().publish(symbol_short!("dep_rwd"), (from, amount));
+        env.events().publish((symbol_short!("dep_rwd"),), (from, amount));
     }
 
     pub fn stake(env: Env, user: Address, amount: i128, lock_duration: u64) -> u64 {
@@ -192,7 +202,6 @@ impl LiquidStaking {
         env.storage().instance().set(&DataKey::TotalStaked, &total.checked_add(amount).expect("total staked overflow"));
 
         // Topic: event name only; user + token_id + amount + lock_time in data.
-        env.events().publish(symbol_short!("staked"), (user, token_id, amount, lock_time));
         env.events().publish((symbol_short!("staked"), user, token_id), (amount, lock_time));
         
         token_id
@@ -200,7 +209,13 @@ impl LiquidStaking {
 
     pub fn unstake(env: Env, user: Address, token_id: u64) {
         user.require_auth();
-        
+
+        // Acquire the reentrancy guard. Any recursive call into a guarded function
+        // while this is held reverts with `ReentrancyDetected`.
+        let _guard = ReentrancyGuard::new(&env)
+            .map_err(|_| Error::ReentrancyDetected)
+            .unwrap();
+
         let nft_contract: Address = env.storage().instance().get(&DataKey::NftContract).unwrap();
         let owner: Address = env.invoke_contract(
             &nft_contract,
@@ -215,9 +230,29 @@ impl LiquidStaking {
         let amount: i128 = env.storage().persistent().get(&DataKey::StakeAmount(token_id)).unwrap_or(0);
         assert!(amount > 0, "no stake found for token");
 
+        // Snapshot accrued rewards (this only updates internal state, no transfer).
         Self::_update_reward(&env, token_id);
-
         let reward: i128 = env.storage().persistent().get(&DataKey::NftRewards(token_id)).unwrap_or(0);
+        // Clear the accrued reward record up-front so a re-entrant call cannot
+        // claim the same reward twice.
+        if reward > 0 {
+            env.storage().persistent().set(&DataKey::NftRewards(token_id), &0_i128);
+        }
+
+        // ── Checks-Effects-Interactions ──────────────────────────────────────
+        // Effects: update all internal user/contract state BEFORE performing any
+        // cross-contract token transfer.
+        let total: i128 = env.storage().instance().get(&DataKey::TotalStaked).unwrap_or(0);
+        env.storage()
+            .instance()
+            .set(&DataKey::TotalStaked, &total.checked_sub(amount).expect("total staked underflow"));
+
+        env.storage().persistent().remove(&DataKey::StakeAmount(token_id));
+        env.storage().persistent().remove(&DataKey::StakeLockTime(token_id));
+        env.storage().persistent().remove(&DataKey::NftRewardPerTokenPaid(token_id));
+        env.storage().persistent().remove(&DataKey::NftRewards(token_id));
+
+        // Interactions: external token transfers happen only after state is settled.
         if reward > 0 {
             let reward_token: Address = env.storage().instance().get(&DataKey::RewardToken).unwrap();
             token::Client::new(&env, &reward_token).transfer(
@@ -227,20 +262,12 @@ impl LiquidStaking {
             );
         }
 
-        let total: i128 = env.storage().instance().get(&DataKey::TotalStaked).unwrap_or(0);
-        env.storage().instance().set(&DataKey::TotalStaked, &total.checked_sub(amount).expect("total staked underflow"));
-
         let stake_token: Address = env.storage().instance().get(&DataKey::StakeToken).unwrap();
         token::Client::new(&env, &stake_token).transfer(
             &env.current_contract_address(),
             &user,
             &amount,
         );
-
-        env.storage().persistent().remove(&DataKey::StakeAmount(token_id));
-        env.storage().persistent().remove(&DataKey::StakeLockTime(token_id));
-        env.storage().persistent().remove(&DataKey::NftRewardPerTokenPaid(token_id));
-        env.storage().persistent().remove(&DataKey::NftRewards(token_id));
 
         // Burn the NFT
         env.invoke_contract::<()>(
@@ -250,12 +277,16 @@ impl LiquidStaking {
         );
 
         // Topic: event name only; user + token_id + amount in data.
-        env.events().publish(symbol_short!("unstaked"), (user, token_id, amount));
         env.events().publish((symbol_short!("unstaked"), user, token_id), amount);
     }
 
     pub fn claim(env: Env, user: Address, token_id: u64) -> i128 {
         user.require_auth();
+
+        // Acquire the reentrancy guard.
+        let _guard = ReentrancyGuard::new(&env)
+            .map_err(|_| Error::ReentrancyDetected)
+            .unwrap();
 
         let nft_contract: Address = env.storage().instance().get(&DataKey::NftContract).unwrap();
         let owner: Address = env.invoke_contract(
@@ -280,7 +311,6 @@ impl LiquidStaking {
             );
 
             // Topic: event name only; user + token_id + reward in data.
-            env.events().publish(symbol_short!("claimed"), (user, token_id, reward));
             env.events().publish((symbol_short!("claimed"), user, token_id), reward);
         }
 
@@ -444,7 +474,7 @@ mod tests {
     use soroban_sdk::{
         testutils::{Address as _},
         token::{Client as TokenClient, StellarAssetClient},
-        Address, Env, String,
+        Address, Env, IntoVal, String,
     };
     
     // Using the imported Rust crate directly for tests
@@ -612,5 +642,107 @@ mod tests {
         // After claim, sync is called, but rewards were just claimed, so it should be "0" again
         let metadata_after = nft_client.get_metadata(&token_id);
         assert_eq!(metadata_after.attributes.get(2).unwrap().value, String::from_str(&env, "0"));
+    }
+
+    // ── Reentrancy guard tests ──────────────────────────────────────────────
+
+    /// A malicious stake token that re-enters `unstake` during the withdrawal
+    /// transfer. It only re-enters when the caller is the liquid staking
+    /// contract itself (i.e. on the stake payout).
+    #[contract]
+    pub struct MaliciousToken;
+
+    #[contractimpl]
+    impl MaliciousToken {
+        pub fn init(env: Env, ls: Address) {
+            env.storage()
+                .instance()
+                .set(&soroban_sdk::symbol_short!("ls"), &ls);
+        }
+
+        pub fn transfer(env: Env, from: Address, _to: Address, _amount: i128) {
+            let ls: Address = env
+                .storage()
+                .instance()
+                .get(&soroban_sdk::symbol_short!("ls"))
+                .unwrap();
+            // The withdrawal path: the liquid staking contract is the sender.
+            if from == ls {
+                // Attempt to re-enter the guarded unstake function.
+                env.invoke_contract::<()>(
+                    &ls,
+                    &soroban_sdk::symbol_short!("unstake"),
+                    (ls.clone(), 1u64).into_val(&env),
+                );
+            }
+        }
+    }
+
+    /// Malicious token client handle (generated by the contract macro).
+    #[test]
+    #[should_panic]
+    fn test_unstake_reentrancy_guarded() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let admin = Address::generate(&env);
+        let alice = Address::generate(&env);
+
+        let reward_token_id = env.register_stellar_asset_contract_v2(admin.clone());
+        let reward_sac = StellarAssetClient::new(&env, &reward_token_id.address());
+        reward_sac.mint(&admin, &10_000_000);
+
+        // Register the malicious stake token.
+        let malicious_id = env.register_contract(None, MaliciousToken);
+        let malicious_client = MaliciousTokenClient::new(&env, &malicious_id);
+
+        let nft_contract_id = env.register_contract(None, nft_metadata::NftMetadataContract);
+        let nft_client = nft_metadata::NftMetadataContractClient::new(&env, &nft_contract_id);
+
+        let ls_contract_id = env.register_contract(None, LiquidStaking);
+        let ls_client = LiquidStakingClient::new(&env, &ls_contract_id);
+
+        nft_client.initialize(
+            &ls_contract_id,
+            &String::from_str(&env, "Liquid Stake"),
+            &String::from_str(&env, "LS"),
+        );
+        ls_client.initialize(
+            &admin,
+            &malicious_id,
+            &reward_token_id.address(),
+            &nft_contract_id,
+        );
+
+        // Tell the malicious token where to re-enter.
+        malicious_client.init(&ls_contract_id);
+
+        // Alice stakes (malicious transfer is a no-op on deposit, no reentry).
+        let token_id = ls_client.stake(&alice, &500_000, &0);
+
+        // Fund rewards so a reward payout also occurs during unstake.
+        ls_client.deposit_rewards(&admin, &1_000);
+
+        // The withdrawal transfer triggers the malicious callback, which attempts to
+        // call unstake again while the guard is held. The re-entrant call must be
+        // reverted (the Soroban host forbids contract re-entry, and our guard would
+        // revert with `Error::ReentrancyDetected` if re-entry were ever permitted).
+        ls_client.unstake(&alice, &token_id);
+    }
+
+    /// Directly exercises the reentrancy guard's revert behaviour: a second acquire
+    /// while the first is still held must revert with `Error::ReentrancyDetected`.
+    #[test]
+    #[should_panic(expected = "ReentrancyDetected")]
+    fn test_reentrancy_guard_reverts() {
+        let env = Env::default();
+        let id = env.register_contract(None, LiquidStaking);
+        env.as_contract(&id, || {
+            let _guard = ReentrancyGuard::new(&env).unwrap();
+            // While `_guard` is alive, a recursive acquire must revert.
+            let _recursive = ReentrancyGuard::new(&env)
+                .map_err(|_| Error::ReentrancyDetected)
+                .unwrap();
+        });
     }
 }
