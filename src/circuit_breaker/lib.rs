@@ -20,6 +20,12 @@ const MAX_BOTS: u32 = 10;
 /// Default volatility threshold in basis points (10% = 1000 bps).
 const DEFAULT_VOLATILITY_BPS: i128 = 1_000;
 
+/// Default volume threshold in XLM (1,000,000 XLM).
+const DEFAULT_VOLUME_THRESHOLD: i128 = 1_000_000;
+
+/// Rolling window duration in seconds (1 hour).
+const WINDOW_DURATION_SECONDS: u64 = 3_600;
+
 // ── Storage keys ──────────────────────────────────────────────────────────────
 
 #[contracttype]
@@ -35,6 +41,10 @@ pub enum DataKey {
     ReferencePrice(Address),
     VolatilityBps,
     TripCount,
+    /// Volume threshold for autonomous volume-based tripping.
+    VolumeThreshold,
+    /// Rolling window of volume entries: (ledger_timestamp, amount).
+    VolumeWindow,
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -53,6 +63,14 @@ pub enum PauseTier {
     All,
 }
 
+/// A single volume entry in the rolling window.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct VolumeEntry {
+    pub timestamp: u64,
+    pub amount: i128,
+}
+
 /// Who triggered the circuit breaker.
 #[contracttype]
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -67,6 +85,7 @@ pub enum TriggerSource {
 #[contract]
 pub struct CircuitBreaker;
 
+#[allow(deprecated)]
 #[contractimpl]
 impl CircuitBreaker {
     // ── Initialization ────────────────────────────────────────────────────────
@@ -110,6 +129,12 @@ impl CircuitBreaker {
             .instance()
             .set(&DataKey::UnpauseUnlocksAt, &0u64);
         env.storage().instance().set(&DataKey::TripCount, &0u32);
+        env.storage()
+            .instance()
+            .set(&DataKey::VolumeThreshold, &DEFAULT_VOLUME_THRESHOLD);
+
+        let window: Vec<VolumeEntry> = Vec::new(&env);
+        env.storage().instance().set(&DataKey::VolumeWindow, &window);
 
         let bots: Vec<Address> = Vec::new(&env);
         env.storage()
@@ -130,7 +155,7 @@ impl CircuitBreaker {
             .get(&DataKey::AuthorizedBots)
             .unwrap_or_else(|| Vec::new(&env));
 
-        assert!((bots.len() as u32) < MAX_BOTS, "bot list is full");
+        assert!(bots.len() < MAX_BOTS, "bot list is full");
 
         for i in 0..bots.len() {
             if bots.get(i).unwrap() == bot {
@@ -139,9 +164,6 @@ impl CircuitBreaker {
         }
 
         bots.push_back(bot.clone());
-        // Topic: event name only; bot + caller Addresses in data.
-        env.storage().instance().set(&DataKey::AuthorizedBots, &bots);
-        env.events().publish(symbol_short!("bot_add"), (bot, caller));
         env.storage()
             .instance()
             .set(&DataKey::AuthorizedBots, &bots);
@@ -171,9 +193,6 @@ impl CircuitBreaker {
             }
         }
         assert!(found, "bot not found");
-        env.storage().instance().set(&DataKey::AuthorizedBots, &new_bots);
-        // Topic: event name only; bot + caller Addresses in data.
-        env.events().publish(symbol_short!("bot_rm"), (bot, caller));
         env.storage()
             .instance()
             .set(&DataKey::AuthorizedBots, &new_bots);
@@ -243,8 +262,10 @@ impl CircuitBreaker {
         let ref_price = match maybe_ref {
             None => {
                 // First observation — store and return without tripping.
-                env.events()
-                    .publish(symbol_short!("ref_set"), (asset, current_price));
+                env.events().publish(
+                    (symbol_short!("cb"), symbol_short!("ref_set")),
+                    (asset, current_price),
+                );
                 return;
             }
             Some(p) => p,
@@ -265,15 +286,89 @@ impl CircuitBreaker {
             Self::apply_trip(&env, PauseTier::All, TriggerSource::Oracle, caller.clone());
             // Topic: event name only; asset + deviation data in payload.
             env.events().publish(
-                symbol_short!("vol_trip"),
-                (asset, deviation_bps, volatility_bps),
+                (symbol_short!("cb"), symbol_short!("vol_trip")),
+                (asset.clone(), deviation_bps, volatility_bps),
             );
         } else {
             env.events().publish(
-                symbol_short!("vol_ok"),
-                (asset, deviation_bps, volatility_bps),
+                (symbol_short!("cb"), symbol_short!("vol_ok")),
+                (asset.clone(), deviation_bps, volatility_bps),
             );
         }
+    }
+
+    // ── Volume-based trigger ───────────────────────────────────────────────────
+
+    /// Record a volume entry into the rolling hourly window.
+    ///
+    /// Prunes entries older than 1 hour, adds the new amount, and trips the
+    /// breaker to `PauseTier::All` if the total volume in the window exceeds
+    /// the configured threshold.
+    ///
+    /// Permissionless — any caller can record volume.
+    pub fn record_volume(env: Env, amount: i128) {
+        assert!(amount > 0, "amount must be positive");
+
+        let now = env.ledger().timestamp();
+        let threshold: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::VolumeThreshold)
+            .unwrap_or(DEFAULT_VOLUME_THRESHOLD);
+
+        // Prune old entries and compute current volume.
+        let mut window: Vec<VolumeEntry> = env
+            .storage()
+            .instance()
+            .get(&DataKey::VolumeWindow)
+            .unwrap_or_else(|| Vec::new(&env));
+
+        let mut pruned: Vec<VolumeEntry> = Vec::new(&env);
+        let mut total: i128 = 0;
+
+        for i in 0..window.len() {
+            if let Some(entry) = window.get(i) {
+                if now.saturating_sub(entry.timestamp) < WINDOW_DURATION_SECONDS {
+                    total = total.checked_add(entry.amount).expect("overflow");
+                    pruned.push_back(entry);
+                }
+            }
+        }
+
+        // Add the new entry.
+        total = total.checked_add(amount).expect("overflow");
+        pruned.push_back(VolumeEntry {
+            timestamp: now,
+            amount,
+        });
+
+        env.storage().instance().set(&DataKey::VolumeWindow, &pruned);
+
+        env.events().publish(
+            (symbol_short!("cb"), symbol_short!("vol_rec")),
+            (amount, total, threshold),
+        );
+
+        // Trip if threshold is exceeded.
+        if total > threshold {
+            Self::apply_trip(&env, PauseTier::All, TriggerSource::Oracle, env.current_contract_address());
+            env.events().publish(
+                (symbol_short!("cb"), symbol_short!("vol_trp")),
+                (total, threshold),
+            );
+        }
+    }
+
+    /// Update the volume threshold (admin only).
+    pub fn set_volume_threshold(env: Env, caller: Address, threshold: i128) {
+        caller.require_auth();
+        Self::assert_admin(&env, &caller);
+        assert!(threshold > 0, "threshold must be positive");
+        env.storage()
+            .instance()
+            .set(&DataKey::VolumeThreshold, &threshold);
+        env.events()
+            .publish((symbol_short!("vthr_set"), caller), threshold);
     }
 
     // ── Unpause (timelock) ────────────────────────────────────────────────────
@@ -300,7 +395,11 @@ impl CircuitBreaker {
             .get(&DataKey::TimelockSeconds)
             .unwrap_or(DEFAULT_TIMELOCK_SECONDS);
 
-        let unlocks_at = env.ledger().timestamp().checked_add(timelock).expect("timelock overflow");
+        let unlocks_at = env
+            .ledger()
+            .timestamp()
+            .checked_add(timelock)
+            .expect("timelock overflow");
 
         env.storage()
             .instance()
@@ -311,7 +410,7 @@ impl CircuitBreaker {
 
         // Topic: event name only; caller + unlocks_at + target_tier in data.
         env.events().publish(
-            symbol_short!("unp_init"),
+            (symbol_short!("cb"), symbol_short!("unp_init")),
             (caller, unlocks_at, target_tier),
         );
     }
@@ -365,9 +464,6 @@ impl CircuitBreaker {
 
         assert!(unlocks_at > 0, "no unpause pending");
 
-        env.storage().instance().set(&DataKey::UnpauseUnlocksAt, &0u64);
-        // Topic: event name only; caller + unlocks_at in data.
-        env.events().publish(symbol_short!("unp_cncl"), (caller, unlocks_at));
         env.storage()
             .instance()
             .set(&DataKey::UnpauseUnlocksAt, &0u64);
@@ -382,9 +478,6 @@ impl CircuitBreaker {
         caller.require_auth();
         Self::assert_admin(&env, &caller);
         assert!(seconds > 0, "timelock must be positive");
-        env.storage().instance().set(&DataKey::TimelockSeconds, &seconds);
-        // Topic: event name only; caller + seconds in data.
-        env.events().publish(symbol_short!("tl_set"), (caller, seconds));
         env.storage()
             .instance()
             .set(&DataKey::TimelockSeconds, &seconds);
@@ -398,8 +491,6 @@ impl CircuitBreaker {
         Self::assert_admin(&env, &caller);
         assert!(bps > 0 && bps <= 10_000, "bps must be 1-10000");
         env.storage().instance().set(&DataKey::VolatilityBps, &bps);
-        // Topic: event name only; caller + bps in data.
-        env.events().publish(symbol_short!("vbps_set"), (caller, bps));
         env.events()
             .publish((symbol_short!("vbps_set"), caller), bps);
     }
@@ -408,9 +499,6 @@ impl CircuitBreaker {
     pub fn set_oracle(env: Env, caller: Address, oracle: Address) {
         caller.require_auth();
         Self::assert_admin(&env, &caller);
-        env.storage().instance().set(&DataKey::OracleContract, &oracle);
-        // Topic: event name only; oracle + caller Addresses in data.
-        env.events().publish(symbol_short!("ora_set"), (oracle, caller));
         env.storage()
             .instance()
             .set(&DataKey::OracleContract, &oracle);
@@ -481,6 +569,44 @@ impl CircuitBreaker {
             .unwrap_or(DEFAULT_VOLATILITY_BPS)
     }
 
+    /// Returns the current volume threshold in XLM.
+    pub fn get_volume_threshold(env: Env) -> i128 {
+        env.storage()
+            .instance()
+            .get(&DataKey::VolumeThreshold)
+            .unwrap_or(DEFAULT_VOLUME_THRESHOLD)
+    }
+
+    /// Returns the total volume recorded in the current rolling window.
+    pub fn get_window_volume(env: Env) -> i128 {
+        let now = env.ledger().timestamp();
+        let window: Vec<VolumeEntry> = env
+            .storage()
+            .instance()
+            .get(&DataKey::VolumeWindow)
+            .unwrap_or_else(|| Vec::new(&env));
+
+        let mut total: i128 = 0;
+        for i in 0..window.len() {
+            if let Some(entry) = window.get(i) {
+                if now.saturating_sub(entry.timestamp) < WINDOW_DURATION_SECONDS {
+                    total = total.checked_add(entry.amount).expect("overflow");
+                }
+            }
+        }
+        total
+    }
+
+    /// Returns the number of entries currently in the rolling volume window.
+    pub fn get_volume_entry_count(env: Env) -> u32 {
+        let window: Vec<VolumeEntry> = env
+            .storage()
+            .instance()
+            .get(&DataKey::VolumeWindow)
+            .unwrap_or_else(|| Vec::new(&env));
+        window.len()
+    }
+
     // ── Internal helpers ──────────────────────────────────────────────────────
 
     fn assert_admin(env: &Env, caller: &Address) {
@@ -523,9 +649,10 @@ impl CircuitBreaker {
             .instance()
             .get(&DataKey::TripCount)
             .unwrap_or(0);
-        env.storage()
-            .instance()
-            .set(&DataKey::TripCount, &count.checked_add(1).expect("trip count overflow"));
+        env.storage().instance().set(
+            &DataKey::TripCount,
+            &count.checked_add(1).expect("trip count overflow"),
+        );
 
         env.events()
             .publish((symbol_short!("tripped"), tier), (caller, source));
@@ -537,7 +664,10 @@ impl CircuitBreaker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{testutils::Address as _, Env};
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger},
+        Env,
+    };
 
     // ── Initialization ────────────────────────────────────────────────────────
 
@@ -902,5 +1032,141 @@ mod tests {
 
         c.trip(&bot, &PauseTier::All);
         assert_eq!(c.get_trip_count(), 2);
+    }
+
+    // ── Volume threshold tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_volume_defaults() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let oracle = Address::generate(&env);
+        let id = env.register(CircuitBreaker, ());
+        let c = CircuitBreakerClient::new(&env, &id);
+        c.initialize(&admin, &oracle, &3600u64, &500i128);
+
+        assert_eq!(c.get_volume_threshold(), DEFAULT_VOLUME_THRESHOLD);
+        assert_eq!(c.get_window_volume(), 0);
+        assert_eq!(c.get_volume_entry_count(), 0);
+    }
+
+    #[test]
+    fn test_record_volume_below_threshold() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let oracle = Address::generate(&env);
+        let id = env.register(CircuitBreaker, ());
+        let c = CircuitBreakerClient::new(&env, &id);
+        c.initialize(&admin, &oracle, &3600u64, &500i128);
+
+        c.record_volume(&500_000i128);
+        assert_eq!(c.get_window_volume(), 500_000);
+        assert_eq!(c.get_volume_entry_count(), 1);
+        // Should NOT be paused
+        assert_eq!(c.get_pause_tier(), PauseTier::None);
+    }
+
+    #[test]
+    fn test_record_volume_exceeds_threshold() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let oracle = Address::generate(&env);
+        let id = env.register(CircuitBreaker, ());
+        let c = CircuitBreakerClient::new(&env, &id);
+        c.initialize(&admin, &oracle, &3600u64, &500i128);
+
+        c.record_volume(&1_500_000i128);
+        // Should trip to All
+        assert_eq!(c.get_pause_tier(), PauseTier::All);
+        assert!(c.is_all_paused());
+    }
+
+    #[test]
+    fn test_record_volume_accumulates() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let oracle = Address::generate(&env);
+        let id = env.register(CircuitBreaker, ());
+        let c = CircuitBreakerClient::new(&env, &id);
+        c.initialize(&admin, &oracle, &3600u64, &500i128);
+
+        c.record_volume(&400_000i128);
+        c.record_volume(&300_000i128);
+        c.record_volume(&200_000i128);
+
+        assert_eq!(c.get_window_volume(), 900_000);
+        assert_eq!(c.get_volume_entry_count(), 3);
+        assert_eq!(c.get_pause_tier(), PauseTier::None);
+    }
+
+    #[test]
+    fn test_window_prunes_old_entries() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let oracle = Address::generate(&env);
+        let id = env.register(CircuitBreaker, ());
+        let c = CircuitBreakerClient::new(&env, &id);
+        c.initialize(&admin, &oracle, &3600u64, &500i128);
+
+        // Record initial volume
+        c.record_volume(&600_000i128);
+        assert_eq!(c.get_window_volume(), 600_000);
+
+        // Advance ledger past the 1-hour window
+        env.ledger().with_mut(|l| l.timestamp = WINDOW_DURATION_SECONDS + 1);
+
+        // Record new volume — old entry should be pruned
+        c.record_volume(&100_000i128);
+        assert_eq!(c.get_window_volume(), 100_000);
+        assert_eq!(c.get_volume_entry_count(), 1);
+    }
+
+    #[test]
+    fn test_set_volume_threshold() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let oracle = Address::generate(&env);
+        let id = env.register(CircuitBreaker, ());
+        let c = CircuitBreakerClient::new(&env, &id);
+        c.initialize(&admin, &oracle, &3600u64, &500i128);
+
+        c.set_volume_threshold(&admin, &500_000i128);
+        assert_eq!(c.get_volume_threshold(), 500_000);
+
+        // Now 600_000 should exceed the new threshold
+        c.record_volume(&600_000i128);
+        assert_eq!(c.get_pause_tier(), PauseTier::All);
+    }
+
+    #[test]
+    #[should_panic(expected = "threshold must be positive")]
+    fn test_set_zero_volume_threshold_panics() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let oracle = Address::generate(&env);
+        let id = env.register(CircuitBreaker, ());
+        let c = CircuitBreakerClient::new(&env, &id);
+        c.initialize(&admin, &oracle, &3600u64, &500i128);
+        c.set_volume_threshold(&admin, &0i128);
+    }
+
+    #[test]
+    #[should_panic(expected = "amount must be positive")]
+    fn test_record_zero_volume_panics() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let oracle = Address::generate(&env);
+        let id = env.register(CircuitBreaker, ());
+        let c = CircuitBreakerClient::new(&env, &id);
+        c.initialize(&admin, &oracle, &3600u64, &500i128);
+        c.record_volume(&0i128);
     }
 }

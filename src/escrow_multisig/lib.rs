@@ -123,6 +123,7 @@ mod tests {
         token::{Client as TokenClient, StellarAssetClient},
         Address, Env, Vec,
     };
+    use soroban_sdk::{testutils::Address as _, token::StellarAssetClient, Address, Env, Vec};
 
     #[test]
     fn test_multisig_escrow_release() {
@@ -142,7 +143,7 @@ mod tests {
         let threshold = 3;
         let recipient = Address::generate(&e);
 
-        let contract_id = e.register_contract(None, EscrowMultisig);
+        let contract_id = e.register(EscrowMultisig, ());
         let client = EscrowMultisigClient::new(&e, &contract_id);
 
         // Initialize the contract
@@ -161,6 +162,13 @@ mod tests {
         // Mint tokens to the contract
         let deposit_amount = 1000;
         sac.mint(&contract_id, &deposit_amount);
+        let token_id = e.register_stellar_asset_contract_v2(admin.clone());
+        let token_client = StellarAssetClient::new(&e, &token_id.address());
+
+        // Mint tokens to the contract
+        let deposit_amount = 1000;
+        token_client.mint(&contract_id, &deposit_amount);
+        let token_client = token::Client::new(&e, &token_id.address());
         assert_eq!(token_client.balance(&contract_id), deposit_amount);
 
         // Prepare signers list (M-of-N)
@@ -174,7 +182,7 @@ mod tests {
         );
 
         // Release tokens
-        client.release(&m_signers, &token_id);
+        client.release(&m_signers, &token_id.address());
 
         // Check balance of recipient
         assert_eq!(token_client.balance(&recipient), deposit_amount);
@@ -198,7 +206,7 @@ mod tests {
         let threshold = 2;
         let recipient = Address::generate(&e);
 
-        let contract_id = e.register_contract(None, EscrowMultisig);
+        let contract_id = e.register(EscrowMultisig, ());
         let client = EscrowMultisigClient::new(&e, &contract_id);
 
         client.initialize(&signers, &threshold, &recipient);
@@ -218,7 +226,7 @@ mod tests {
         let threshold = 1;
         let recipient = Address::generate(&e);
 
-        let contract_id = e.register_contract(None, EscrowMultisig);
+        let contract_id = e.register(EscrowMultisig, ());
         let client = EscrowMultisigClient::new(&e, &contract_id);
 
         client.initialize(&signers, &threshold, &recipient);

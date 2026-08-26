@@ -4,11 +4,12 @@ import {
   Sep31TransactionResponse,
   Sep31TransactionRecord,
   Sep31TransactionStatus,
+  FeeBreakdownItem,
+  Sep31Config,
 } from "./types";
+import { formatDecimal, toDecimal } from "../utils/decimal";
 
 // ─── In-memory store (replace with DB in production) ──────────────────────
-// In the AnchorPoint backend this would be backed by the existing
-// transaction tracking system (SQLite via the docker-compose setup).
 const transactionStore = new Map<string, Sep31TransactionRecord>();
 
 // ─── Anchor configuration (would come from env / config in production) ─────
@@ -16,47 +17,135 @@ const ANCHOR_STELLAR_ACCOUNT =
   process.env.ANCHOR_DISTRIBUTION_ACCOUNT ??
   "GDIODQRBHD32QZWTGOHO2UNWSNOQN36AFKYDAJN4TBRTSXQMTZBHZ4R";
 
-const FEE_PERCENT = 0.005; // 0.5 %
-const FEE_FIXED  = 0;      // no flat fee
+/** Default fee configuration used when no SystemConfig is provided. */
+const DEFAULT_FEE_PERCENT = 0.005; // 0.5 %
+const DEFAULT_FEE_FIXED = 0; // no flat fee
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
 function generateMemo(): { memo: string; memo_type: "text" } {
-  // Short alphanumeric memo that the sending anchor attaches to the payment
   const memo = uuidv4().replace(/-/g, "").slice(0, 12).toUpperCase();
   return { memo, memo_type: "text" };
 }
 
 function calculateAmountOut(amountIn: string): string {
-  const raw = parseFloat(amountIn);
-  const fee = raw * FEE_PERCENT + FEE_FIXED;
-  return (raw - fee).toFixed(7);
+  const raw = toDecimal(amountIn);
+  const fee = raw.times(FEE_PERCENT).plus(FEE_FIXED);
+  return formatDecimal(raw.minus(fee));
 }
 
 function calculateFee(amountIn: string): string {
+  const raw = toDecimal(amountIn);
+  return formatDecimal(raw.times(FEE_PERCENT).plus(FEE_FIXED));
+/** Resolves fee parameters from config or falls back to hardcoded defaults. */
+function resolveFeeParams(
+  assetCode: string,
+  sep31Config?: Sep31Config
+): { feePercent: number; feeFixed: number } {
+  if (sep31Config?.assets) {
+    const assetCfg = sep31Config.assets[assetCode.toUpperCase()];
+    if (assetCfg) {
+      return {
+        feePercent: assetCfg.fee_percent / 100, // stored as percentage, use as decimal
+        feeFixed: assetCfg.fee_fixed,
+      };
+    }
+  }
+  return { feePercent: DEFAULT_FEE_PERCENT, feeFixed: DEFAULT_FEE_FIXED };
+}
+
+function calculateAmountOut(
+  amountIn: string,
+  feePercent: number,
+  feeFixed: number
+): string {
   const raw = parseFloat(amountIn);
-  return (raw * FEE_PERCENT + FEE_FIXED).toFixed(7);
+  const fee = raw * feePercent + feeFixed;
+  return (raw - fee).toFixed(7);
+}
+
+function calculateFee(
+  amountIn: string,
+  feePercent: number,
+  feeFixed: number
+): string {
+  const raw = parseFloat(amountIn);
+  return (raw * feePercent + feeFixed).toFixed(7);
+}
+
+/**
+ * Builds a transparent fee breakdown with individual line items.
+ */
+function buildFeeBreakdown(
+  amountIn: string,
+  feePercent: number,
+  feeFixed: number
+): FeeBreakdownItem[] {
+  const items: FeeBreakdownItem[] = [];
+  const raw = parseFloat(amountIn);
+  const percentageFee = raw * feePercent;
+
+  if (feePercent > 0) {
+    items.push({
+      name: "percentage_fee",
+      amount: percentageFee.toFixed(7),
+      description: `Processing fee (${(feePercent * 100).toFixed(2)}% of amount_in)`,
+    });
+  }
+
+  if (feeFixed > 0) {
+    items.push({
+      name: "fixed_fee",
+      amount: feeFixed.toFixed(7),
+      description: "Flat processing fee per transaction",
+    });
+  }
+
+  if (items.length === 0) {
+    items.push({
+      name: "no_fee",
+      amount: "0.0000000",
+      description: "No fees applied to this transaction",
+    });
+  }
+
+  return items;
 }
 
 // ─── Service ───────────────────────────────────────────────────────────────
 
 /**
  * Creates a new SEP-31 cross-border payment transaction.
- * Returns the data the sending anchor needs to initiate the Stellar payment.
+ * Returns the data the sending anchor needs to initiate the Stellar payment,
+ * including a transparent fee breakdown.
+ *
+ * @param sep31Config - Optional SEP-31 configuration from SystemConfig.
+ *                      When provided, fee calculation is driven by the
+ *                      dynamic configuration.
  */
 export async function createSep31Transaction(
-  req: Sep31TransactionRequest
+  req: Sep31TransactionRequest,
+  sep31Config?: Sep31Config
 ): Promise<Sep31TransactionResponse> {
+  const { feePercent, feeFixed } = resolveFeeParams(
+    req.asset_code,
+    sep31Config
+  );
+
   const id = uuidv4();
   const now = new Date().toISOString();
   const { memo, memo_type } = generateMemo();
+
+  const amountOut = calculateAmountOut(req.amount, feePercent, feeFixed);
+  const amountFee = calculateFee(req.amount, feePercent, feeFixed);
+  const feeBreakdown = buildFeeBreakdown(req.amount, feePercent, feeFixed);
 
   const record: Sep31TransactionRecord = {
     id,
     status: "pending_sender",
     amount_in: req.amount,
-    amount_out: calculateAmountOut(req.amount),
-    amount_fee: calculateFee(req.amount),
+    amount_out: amountOut,
+    amount_fee: amountFee,
     asset_code: req.asset_code.toUpperCase(),
     asset_issuer: req.asset_issuer,
     stellar_account_id: ANCHOR_STELLAR_ACCOUNT,
@@ -77,6 +166,9 @@ export async function createSep31Transaction(
     stellar_account_id: record.stellar_account_id,
     stellar_memo: record.stellar_memo,
     stellar_memo_type: record.stellar_memo_type,
+    amount_out: record.amount_out!,
+    amount_fee: record.amount_fee!,
+    fee_breakdown: feeBreakdown,
   };
 }
 
@@ -128,49 +220,68 @@ export async function updateSep31TransactionStatus(
 
 /**
  * Returns SEP-31 /info payload describing supported assets and required fields.
+ * When a sep31Config is provided, the asset list and fee values are sourced
+ * from the dynamic SystemConfig.
  */
-export function getSep31Info() {
-  return {
-    receive: {
-      USDC: {
-        enabled: true,
-        quotes_supported: false,
-        quotes_required: false,
-        fee_fixed: FEE_FIXED,
-        fee_percent: FEE_PERCENT * 100,
-        min_amount: 1,
-        max_amount: 1_000_000,
-        sender_sep12_type: "sep31-sender",
-        receiver_sep12_type: "sep31-receiver",
-        fields: {
-          transaction: {
-            routing_number: {
-              description: "Bank routing number of the receiver",
-            },
-            account_number: {
-              description: "Bank account number of the receiver",
-            },
-          },
-        },
-      },
-      EURC: {
-        enabled: true,
-        quotes_supported: false,
-        quotes_required: false,
-        fee_fixed: FEE_FIXED,
-        fee_percent: FEE_PERCENT * 100,
-        min_amount: 1,
-        max_amount: 1_000_000,
-        sender_sep12_type: "sep31-sender",
-        receiver_sep12_type: "sep31-receiver",
-        fields: {
-          transaction: {
-            iban: {
-              description: "IBAN of the receiver's bank account",
-            },
-          },
-        },
-      },
+export function getSep31Info(sep31Config?: Sep31Config) {
+  const defaultAssets: Sep31Config["assets"] = {
+    USDC: {
+      enabled: true,
+      min_amount: 1,
+      max_amount: 1_000_000,
+      fee_fixed: 0,
+      fee_percent: 0.5,
+      quotes_supported: false,
+      quotes_required: false,
+      sender_sep12_type: "sep31-sender",
+      receiver_sep12_type: "sep31-receiver",
+    },
+    EURC: {
+      enabled: true,
+      min_amount: 1,
+      max_amount: 1_000_000,
+      fee_fixed: 0,
+      fee_percent: 0.5,
+      quotes_supported: false,
+      quotes_required: false,
+      sender_sep12_type: "sep31-sender",
+      receiver_sep12_type: "sep31-receiver",
     },
   };
+
+  const assets = sep31Config?.assets ?? defaultAssets;
+  const receive: Record<string, unknown> = {};
+
+  for (const [code, cfg] of Object.entries(assets)) {
+    receive[code] = {
+      enabled: cfg.enabled,
+      quotes_supported: cfg.quotes_supported,
+      quotes_required: cfg.quotes_required,
+      fee_fixed: cfg.fee_fixed,
+      fee_percent: cfg.fee_percent,
+      min_amount: cfg.min_amount,
+      max_amount: cfg.max_amount,
+      sender_sep12_type: cfg.sender_sep12_type,
+      receiver_sep12_type: cfg.receiver_sep12_type,
+      fields: {
+        transaction:
+          code === "EURC"
+            ? {
+                iban: {
+                  description: "IBAN of the receiver's bank account",
+                },
+              }
+            : {
+                routing_number: {
+                  description: "Bank routing number of the receiver",
+                },
+                account_number: {
+                  description: "Bank account number of the receiver",
+                },
+              },
+      },
+    };
+  }
+
+  return { receive };
 }

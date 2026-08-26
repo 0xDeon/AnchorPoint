@@ -128,6 +128,139 @@ const options: swaggerJsdoc.Options = {
             },
           },
         },
+        Job: {
+          type: 'object',
+          properties: {
+            id: {
+              type: 'string',
+              format: 'uuid',
+            },
+            jobId: {
+              type: 'string',
+            },
+            type: {
+              type: 'string',
+            },
+            priority: {
+              type: 'string',
+              enum: ['LOW', 'NORMAL', 'HIGH', 'URGENT'],
+            },
+            status: {
+              type: 'string',
+              enum: ['PENDING', 'ACTIVE', 'COMPLETED', 'FAILED', 'DELAYED', 'RETRYING'],
+            },
+            contractId: {
+              type: 'string',
+            },
+            functionName: {
+              type: 'string',
+            },
+            parameters: {
+              type: 'object',
+            },
+            result: {
+              type: 'object',
+            },
+            error: {
+              type: 'string',
+            },
+            attempts: {
+              type: 'integer',
+            },
+            maxAttempts: {
+              type: 'integer',
+            },
+            createdBy: {
+              type: 'string',
+            },
+            createdAt: {
+              type: 'string',
+              format: 'date-time',
+            },
+            startedAt: {
+              type: 'string',
+              format: 'date-time',
+            },
+            completedAt: {
+              type: 'string',
+              format: 'date-time',
+            },
+          },
+        },
+        MultisigTransaction: {
+          type: 'object',
+          properties: {
+            id: {
+              type: 'string',
+              format: 'uuid',
+            },
+            hash: {
+              type: 'string',
+            },
+            envelopeXdr: {
+              type: 'string',
+            },
+            creatorPublicKey: {
+              type: 'string',
+            },
+            requiredSigners: {
+              type: 'array',
+              items: {
+                type: 'string',
+              },
+            },
+            threshold: {
+              type: 'integer',
+            },
+            currentSignatures: {
+              type: 'integer',
+            },
+            status: {
+              type: 'string',
+              enum: ['PENDING', 'PARTIALLY_SIGNED', 'READY', 'SUBMITTED', 'FAILED', 'EXPIRED'],
+            },
+            signatures: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  signerPublicKey: {
+                    type: 'string',
+                  },
+                  signedAt: {
+                    type: 'string',
+                    format: 'date-time',
+                  },
+                },
+              },
+            },
+            memo: {
+              type: 'string',
+            },
+            expiresAt: {
+              type: 'string',
+              format: 'date-time',
+            },
+            submittedAt: {
+              type: 'string',
+              format: 'date-time',
+            },
+            stellarTxId: {
+              type: 'string',
+            },
+            metadata: {
+              type: 'object',
+            },
+            createdAt: {
+              type: 'string',
+              format: 'date-time',
+            },
+            updatedAt: {
+              type: 'string',
+              format: 'date-time',
+            },
+          },
+        },
       },
     },
     tags: [

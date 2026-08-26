@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { RedisService } from '../../services/redis.service';
-import { getChallenge, getToken } from '../controllers/auth.controller';
+import { getChallenge, getToken, refreshToken } from '../controllers/auth.controller';
 
 const router = Router();
 
@@ -105,6 +105,30 @@ router.post('/', async (req: Request, res: Response) => {
 
 /**
  * @swagger
+ * /auth:
+ *   get:
+ *     summary: SEP-10 Challenge Endpoint (GET)
+ *     description: Generates a SEP-10 challenge transaction. Account is supplied as a query parameter.
+ *     tags: [Auth]
+ *     parameters:
+ *       - in: query
+ *         name: account
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Stellar account public key
+ *     responses:
+ *       200:
+ *         description: Challenge transaction generated
+ *       400:
+ *         description: Invalid request parameters
+ */
+router.get('/', async (req: Request, res: Response) => {
+  return getChallenge(req, res, redisService);
+});
+
+/**
+ * @swagger
  * /auth/token:
  *   post:
  *     summary: SEP-10 Token Endpoint
@@ -187,6 +211,25 @@ router.post('/', async (req: Request, res: Response) => {
  */
 router.post('/token', async (req: Request, res: Response) => {
   return getToken(req, res, redisService);
+});
+
+/**
+ * @swagger
+ * /auth/refresh:
+ *   post:
+ *     summary: SEP-10 Token Refresh Endpoint
+ *     description: Refreshes an existing valid JWT token
+ *     tags: [Auth]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Token successfully refreshed
+ *       401:
+ *         description: Invalid or missing token
+ */
+router.post('/refresh', async (req: Request, res: Response) => {
+  return refreshToken(req, res);
 });
 
 export default router;

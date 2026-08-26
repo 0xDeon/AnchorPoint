@@ -732,6 +732,10 @@ impl NftMetadataContract {
         // Topic: event name only; owner + operator + approved in data.
         env.events()
             .publish((symbol_short!("appr_all"), owner.clone(), operator), approved);
+        env.events().publish(
+            (symbol_short!("appr_all"),),
+            (owner, operator, approved),
+        );
     }
 
     /// Check if an address is approved for a token

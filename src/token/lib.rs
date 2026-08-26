@@ -24,6 +24,7 @@ pub enum DataKey {
 #[contract]
 pub struct TokenContract;
 
+#[allow(deprecated)]
 #[contractimpl]
 impl TokenContract {
     pub fn initialize(env: Env, admin: Address, decimals: u32, name: String, symbol: String) {
@@ -376,6 +377,10 @@ mod tests {
     extern crate std;
     use super::*;
     use soroban_sdk::{testutils::{Address as _, Ledger}, Env, String};
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger},
+        Env, String,
+    };
 
     fn setup() -> (Env, TokenContractClient<'static>, Address) {
         let env = Env::default();
@@ -533,6 +538,7 @@ mod tests {
         client.permit(&owner, &spender, &token_id, &100, &0, &200);
     }
 
+    #[test]
     #[should_panic(expected = "length mismatch")]
     fn test_batch_transfer_length_mismatch() {
         let (env, client, _) = setup();
@@ -587,7 +593,7 @@ mod tests {
 
     #[test]
     fn test_set_metadata_authorized() {
-        let (env, client, admin) = setup();
+        let (env, client, _admin) = setup();
         let token_id = 1u64;
         let uri = String::from_str(&env, "ipfs://test");
 
@@ -689,354 +695,448 @@ mod invariants {
         );
     }
 
-    #[test]
-    fn invariant_supply_conservation_after_burn() {
-        let (env, client, _) = setup_fresh();
-        let user = Address::generate(&env);
-        let token_id = 1u64;
+    /// ============================================================================
+    /// Formal Verification Invariants
+    /// ============================================================================
+    /// These tests verify critical invariants that must hold for all valid states
+    /// and operations of the token contract. They use property-based testing
+    /// patterns to ensure mathematical correctness.
+    #[cfg(test)]
+    mod invariants {
+        extern crate std;
+        use super::*;
+        use soroban_sdk::{Env, String};
 
-        client.mint(&user, &token_id, &1000);
-        let supply_before_burn = client.total_supply(&token_id);
+        /// Helper to set up a fresh contract instance
+        fn setup_fresh() -> (Env, TokenContractClient<'static>, Address) {
+            let env = Env::default();
+            env.mock_all_auths();
+            let id = env.register(TokenContract, ());
+            let client = TokenContractClient::new(&env, &id);
+            let admin = Address::generate(&env);
+            client.initialize(
+                &admin,
+                &7u32,
+                &String::from_str(&env, "AnchorToken"),
+                &String::from_str(&env, "ANCT"),
+            );
+            (env, client, admin)
+        }
 
-        client.burn(&user, &token_id, &300);
+        // =========================================================================
+        // INVARIANT 1: Conservation of Supply
+        // =========================================================================
+        /// After any operation, the sum of all user balances must equal total_supply.
+        /// This is the fundamental invariant of any token contract.
+        #[test]
+        fn invariant_supply_conservation_after_mint() {
+            let (env, client, _) = setup_fresh();
+            let user1 = Address::generate(&env);
+            let user2 = Address::generate(&env);
+            let user3 = Address::generate(&env);
+            let token_id = 1u64;
 
-        // Invariant: supply decreases by exactly the burned amount
-        assert_eq!(
-            client.total_supply(&token_id),
-            supply_before_burn - 300,
-            "INVARIANT VIOLATION: Supply not reduced correctly after burn"
-        );
+            // Mint to multiple users
+            client.mint(&user1, &token_id, &1000);
+            client.mint(&user2, &token_id, &500);
+            client.mint(&user3, &token_id, &250);
 
-        // Invariant: balance equals remaining supply
-        assert_eq!(
-            client.balance_of(&user, &token_id),
-            client.total_supply(&token_id),
-            "INVARIANT VIOLATION: Balance doesn't match supply after burn"
-        );
-    }
+            let balance_sum = client.balance_of(&user1, &token_id)
+                + client.balance_of(&user2, &token_id)
+                + client.balance_of(&user3, &token_id);
 
-    // =========================================================================
-    // INVARIANT 2: Non-Negative Balances
-    // =========================================================================
-    /// All balances must always be non-negative (>= 0).
-    /// This is enforced by the contract logic, but we verify it holds.
-    #[test]
-    fn invariant_non_negative_balances() {
-        let (env, client, _) = setup_fresh();
-        let user = Address::generate(&env);
-        let token_id = 1u64;
+            // Invariant: sum of balances equals total supply
+            assert_eq!(
+                client.total_supply(&token_id),
+                balance_sum,
+                "INVARIANT VIOLATION: Supply conservation failed after mint"
+            );
+        }
 
-        // Initial balance is 0 (non-negative)
-        assert!(
-            client.balance_of(&user, &token_id) >= 0,
-            "INVARIANT VIOLATION: Initial balance is negative"
-        );
+        #[test]
+        fn invariant_supply_conservation_after_transfer() {
+            let (env, client, _) = setup_fresh();
+            let alice = Address::generate(&env);
+            let bob = Address::generate(&env);
+            let carol = Address::generate(&env);
+            let token_id = 1u64;
 
-        client.mint(&user, &token_id, &100);
-        assert!(
-            client.balance_of(&user, &token_id) >= 0,
-            "INVARIANT VIOLATION: Balance negative after mint"
-        );
+            client.mint(&alice, &token_id, &1000);
 
-        client.burn(&user, &token_id, &100);
-        assert!(
-            client.balance_of(&user, &token_id) >= 0,
-            "INVARIANT VIOLATION: Balance negative after burn"
-        );
-    }
+            let supply_before = client.total_supply(&token_id);
 
-    // =========================================================================
-    // INVARIANT 3: Conservation of Value in Transfer
-    // =========================================================================
-    /// In any transfer, the sum of sender and receiver balances before
-    /// must equal the sum after the transfer.
-    #[test]
-    fn invariant_transfer_value_conservation() {
-        let (env, client, _) = setup_fresh();
-        let alice = Address::generate(&env);
-        let bob = Address::generate(&env);
-        let token_id = 1u64;
+            // Multiple transfers
+            client.transfer(&alice, &bob, &token_id, &300);
+            client.transfer(&bob, &carol, &token_id, &150);
+            client.transfer(&alice, &carol, &token_id, &100);
 
-        client.mint(&alice, &token_id, &1000);
+            let supply_after = client.total_supply(&token_id);
 
-        let alice_before = client.balance_of(&alice, &token_id);
-        let bob_before = client.balance_of(&bob, &token_id);
-        let sum_before = alice_before + bob_before;
+            // Invariant: transfers do not change total supply
+            assert_eq!(
+                supply_before, supply_after,
+                "INVARIANT VIOLATION: Supply changed during transfers"
+            );
 
-        client.transfer(&alice, &bob, &token_id, &400);
+            // Invariant: sum of balances still equals supply
+            let balance_sum = client.balance_of(&alice, &token_id)
+                + client.balance_of(&bob, &token_id)
+                + client.balance_of(&carol, &token_id);
+            assert_eq!(
+                supply_after, balance_sum,
+                "INVARIANT VIOLATION: Balance sum doesn't match supply after transfers"
+            );
+        }
 
-        let alice_after = client.balance_of(&alice, &token_id);
-        let bob_after = client.balance_of(&bob, &token_id);
-        let sum_after = alice_after + bob_after;
+        #[test]
+        fn invariant_supply_conservation_after_burn() {
+            let (env, client, _) = setup_fresh();
+            let user = Address::generate(&env);
+            let token_id = 1u64;
 
-        // Invariant: total value is conserved
-        assert_eq!(
-            sum_before, sum_after,
-            "INVARIANT VIOLATION: Value not conserved in transfer"
-        );
+            client.mint(&user, &token_id, &1000);
+            let supply_before_burn = client.total_supply(&token_id);
 
-        // Additional checks: exact changes
-        assert_eq!(
-            alice_before - alice_after,
-            400,
-            "INVARIANT VIOLATION: Sender balance not reduced correctly"
-        );
-        assert_eq!(
-            bob_after - bob_before,
-            400,
-            "INVARIANT VIOLATION: Receiver balance not increased correctly"
-        );
-    }
+            client.burn(&user, &token_id, &300);
 
-    // =========================================================================
-    // INVARIANT 4: Allowance Accounting
-    // =========================================================================
-    /// After transfer_from, the allowance must decrease by exactly the
-    /// transferred amount.
-    #[test]
-    fn invariant_allowance_decrease_on_transfer_from() {
-        let (env, client, _) = setup_fresh();
-        let owner = Address::generate(&env);
-        let spender = Address::generate(&env);
-        let recipient = Address::generate(&env);
-        let token_id = 1u64;
+            // Invariant: supply decreases by exactly the burned amount
+            assert_eq!(
+                client.total_supply(&token_id),
+                supply_before_burn - 300,
+                "INVARIANT VIOLATION: Supply not reduced correctly after burn"
+            );
 
-        client.mint(&owner, &token_id, &1000);
-        client.approve(&owner, &spender, &token_id, &500);
+            // Invariant: balance equals remaining supply
+            assert_eq!(
+                client.balance_of(&user, &token_id),
+                client.total_supply(&token_id),
+                "INVARIANT VIOLATION: Balance doesn't match supply after burn"
+            );
+        }
 
-        let allowance_before = client.allowance(&owner, &spender, &token_id);
+        // =========================================================================
+        // INVARIANT 2: Non-Negative Balances
+        // =========================================================================
+        /// All balances must always be non-negative (>= 0).
+        /// This is enforced by the contract logic, but we verify it holds.
+        #[test]
+        fn invariant_non_negative_balances() {
+            let (env, client, _) = setup_fresh();
+            let user = Address::generate(&env);
+            let token_id = 1u64;
 
-        client.transfer_from(&spender, &owner, &recipient, &token_id, &200);
+            // Initial balance is 0 (non-negative)
+            assert!(
+                client.balance_of(&user, &token_id) >= 0,
+                "INVARIANT VIOLATION: Initial balance is negative"
+            );
 
-        let allowance_after = client.allowance(&owner, &spender, &token_id);
+            client.mint(&user, &token_id, &100);
+            assert!(
+                client.balance_of(&user, &token_id) >= 0,
+                "INVARIANT VIOLATION: Balance negative after mint"
+            );
 
-        // Invariant: allowance decreased by exactly the spent amount
-        assert_eq!(
-            allowance_before - allowance_after,
-            200,
-            "INVARIANT VIOLATION: Allowance not reduced correctly"
-        );
-    }
+            client.burn(&user, &token_id, &100);
+            assert!(
+                client.balance_of(&user, &token_id) >= 0,
+                "INVARIANT VIOLATION: Balance negative after burn"
+            );
+        }
 
-    #[test]
-    #[should_panic]
-    fn invariant_allowance_cannot_exceed_approval() {
-        let (env, client, _) = setup_fresh();
-        let owner = Address::generate(&env);
-        let spender = Address::generate(&env);
-        let recipient = Address::generate(&env);
-        let token_id = 1u64;
+        // =========================================================================
+        // INVARIANT 3: Conservation of Value in Transfer
+        // =========================================================================
+        /// In any transfer, the sum of sender and receiver balances before
+        /// must equal the sum after the transfer.
+        #[test]
+        fn invariant_transfer_value_conservation() {
+            let (env, client, _) = setup_fresh();
+            let alice = Address::generate(&env);
+            let bob = Address::generate(&env);
+            let token_id = 1u64;
 
-        client.mint(&owner, &token_id, &1000);
-        client.approve(&owner, &spender, &token_id, &100);
+            client.mint(&alice, &token_id, &1000);
 
-        // Attempting to spend more than approved should fail
-        client.transfer_from(&spender, &owner, &recipient, &token_id, &150);
-    }
+            let alice_before = client.balance_of(&alice, &token_id);
+            let bob_before = client.balance_of(&bob, &token_id);
+            let sum_before = alice_before + bob_before;
 
-    // =========================================================================
-    // INVARIANT 5: No Double Spend
-    // =========================================================================
-    /// A user cannot spend the same tokens twice (either directly or via approval).
-    #[test]
-    #[should_panic]
-    fn invariant_no_double_spend_direct() {
-        let (env, client, _) = setup_fresh();
-        let alice = Address::generate(&env);
-        let bob = Address::generate(&env);
-        let carol = Address::generate(&env);
-        let token_id = 1u64;
+            client.transfer(&alice, &bob, &token_id, &400);
 
-        client.mint(&alice, &token_id, &100);
+            let alice_after = client.balance_of(&alice, &token_id);
+            let bob_after = client.balance_of(&bob, &token_id);
+            let sum_after = alice_after + bob_after;
 
-        // First transfer succeeds
-        client.transfer(&alice, &bob, &token_id, &60);
+            // Invariant: total value is conserved
+            assert_eq!(
+                sum_before, sum_after,
+                "INVARIANT VIOLATION: Value not conserved in transfer"
+            );
 
-        // Alice now has 40, trying to spend 60 more should fail
-        client.transfer(&alice, &carol, &token_id, &60);
-    }
+            // Additional checks: exact changes
+            assert_eq!(
+                alice_before - alice_after,
+                400,
+                "INVARIANT VIOLATION: Sender balance not reduced correctly"
+            );
+            assert_eq!(
+                bob_after - bob_before,
+                400,
+                "INVARIANT VIOLATION: Receiver balance not increased correctly"
+            );
+        }
 
-    // =========================================================================
-    // INVARIANT 6: Total Supply Monotonicity
-    // =========================================================================
-    /// Total supply only increases via mint and only decreases via burn.
-    /// Transfers do not affect total supply.
-    #[test]
-    fn invariant_supply_only_changes_via_mint_burn() {
-        let (env, client, _) = setup_fresh();
-        let alice = Address::generate(&env);
-        let bob = Address::generate(&env);
-        let token_id = 1u64;
+        // =========================================================================
+        // INVARIANT 4: Allowance Accounting
+        // =========================================================================
+        /// After transfer_from, the allowance must decrease by exactly the
+        /// transferred amount.
+        #[test]
+        fn invariant_allowance_decrease_on_transfer_from() {
+            let (env, client, _) = setup_fresh();
+            let owner = Address::generate(&env);
+            let spender = Address::generate(&env);
+            let recipient = Address::generate(&env);
+            let token_id = 1u64;
 
-        let initial_supply = client.total_supply(&token_id);
-        assert_eq!(initial_supply, 0);
+            client.mint(&owner, &token_id, &1000);
+            client.approve(&owner, &spender, &token_id, &500);
 
-        // Mint increases supply
-        client.mint(&alice, &token_id, &500);
-        assert_eq!(client.total_supply(&token_id), 500);
+            let allowance_before = client.allowance(&owner, &spender, &token_id);
 
-        // Transfer does not change supply
-        client.transfer(&alice, &bob, &token_id, &200);
-        assert_eq!(
-            client.total_supply(&token_id),
-            500,
-            "INVARIANT VIOLATION: Transfer changed total supply"
-        );
+            client.transfer_from(&spender, &owner, &recipient, &token_id, &200);
 
-        // Approve does not change supply
-        client.approve(&alice, &bob, &token_id, &100);
-        assert_eq!(
-            client.total_supply(&token_id),
-            500,
-            "INVARIANT VIOLATION: Approve changed total supply"
-        );
+            let allowance_after = client.allowance(&owner, &spender, &token_id);
 
-        // Burn decreases supply
-        client.burn(&alice, &token_id, &100);
-        assert_eq!(client.total_supply(&token_id), 400);
-    }
+            // Invariant: allowance decreased by exactly the spent amount
+            assert_eq!(
+                allowance_before - allowance_after,
+                200,
+                "INVARIANT VIOLATION: Allowance not reduced correctly"
+            );
+        }
 
-    // =========================================================================
-    // INVARIANT 7: Zero Address Handling
-    // =========================================================================
-    /// The contract should handle zero amounts appropriately.
-    #[test]
-    #[should_panic]
-    fn invariant_mint_zero_rejected() {
-        let (env, client, _) = setup_fresh();
-        let user = Address::generate(&env);
-        let token_id = 1u64;
+        #[test]
+        #[should_panic]
+        fn invariant_allowance_cannot_exceed_approval() {
+            let (env, client, _) = setup_fresh();
+            let owner = Address::generate(&env);
+            let spender = Address::generate(&env);
+            let recipient = Address::generate(&env);
+            let token_id = 1u64;
 
-        client.mint(&user, &token_id, &0);
-    }
+            client.mint(&owner, &token_id, &1000);
+            client.approve(&owner, &spender, &token_id, &100);
 
-    #[test]
-    #[should_panic]
-    fn invariant_burn_zero_rejected() {
-        let (env, client, _) = setup_fresh();
-        let user = Address::generate(&env);
-        let token_id = 1u64;
+            // Attempting to spend more than approved should fail
+            client.transfer_from(&spender, &owner, &recipient, &token_id, &150);
+        }
 
-        client.mint(&user, &token_id, &100);
-        client.burn(&user, &token_id, &0);
-    }
+        // =========================================================================
+        // INVARIANT 5: No Double Spend
+        // =========================================================================
+        /// A user cannot spend the same tokens twice (either directly or via approval).
+        #[test]
+        #[should_panic]
+        fn invariant_no_double_spend_direct() {
+            let (env, client, _) = setup_fresh();
+            let alice = Address::generate(&env);
+            let bob = Address::generate(&env);
+            let carol = Address::generate(&env);
+            let token_id = 1u64;
 
-    // =========================================================================
-    // INVARIANT 8: Idempotency Properties
-    // =========================================================================
-    /// Certain operations should have predictable idempotent-like behavior.
-    #[test]
-    fn invariant_approve_overwrites() {
-        let (env, client, _) = setup_fresh();
-        let owner = Address::generate(&env);
-        let spender = Address::generate(&env);
-        let token_id = 1u64;
+            client.mint(&alice, &token_id, &100);
 
-        client.approve(&owner, &spender, &token_id, &100);
-        assert_eq!(client.allowance(&owner, &spender, &token_id), 100);
+            // First transfer succeeds
+            client.transfer(&alice, &bob, &token_id, &60);
 
-        // New approval should overwrite, not add
-        client.approve(&owner, &spender, &token_id, &200);
-        assert_eq!(
-            client.allowance(&owner, &spender, &token_id),
-            200,
-            "INVARIANT VIOLATION: Approve did not overwrite previous allowance"
-        );
-    }
+            // Alice now has 40, trying to spend 60 more should fail
+            client.transfer(&alice, &carol, &token_id, &60);
+        }
 
-    // =========================================================================
-    // PROPERTY-BASED INVARIANT TESTS
-    // =========================================================================
-    /// These tests verify invariants across sequences of random-ish operations.
+        // =========================================================================
+        // INVARIANT 6: Total Supply Monotonicity
+        // =========================================================================
+        /// Total supply only increases via mint and only decreases via burn.
+        /// Transfers do not affect total supply.
+        #[test]
+        fn invariant_supply_only_changes_via_mint_burn() {
+            let (env, client, _) = setup_fresh();
+            let alice = Address::generate(&env);
+            let bob = Address::generate(&env);
+            let token_id = 1u64;
 
-    #[test]
-    fn property_sequence_invariant() {
-        let (env, client, _) = setup_fresh();
-        let alice = Address::generate(&env);
-        let bob = Address::generate(&env);
-        let carol = Address::generate(&env);
-        let token_id = 1u64;
+            let initial_supply = client.total_supply(&token_id);
+            assert_eq!(initial_supply, 0);
 
-        // Sequence of operations that should maintain invariants
-        client.mint(&alice, &token_id, &1000); // Alice: 1000
-        client.mint(&bob, &token_id, &500); // Bob: 500
-        client.transfer(&alice, &bob, &token_id, &200); // Alice: 800, Bob: 700
-        client.approve(&bob, &carol, &token_id, &300);
-        client.transfer_from(&carol, &bob, &alice, &token_id, &150); // Alice: 950, Bob: 550
-        client.burn(&alice, &token_id, &100); // Total supply reduced by 100
+            // Mint increases supply
+            client.mint(&alice, &token_id, &500);
+            assert_eq!(client.total_supply(&token_id), 500);
 
-        // Verify final invariants
-        let total_balance = client.balance_of(&alice, &token_id)
-            + client.balance_of(&bob, &token_id)
-            + client.balance_of(&carol, &token_id);
+            // Transfer does not change supply
+            client.transfer(&alice, &bob, &token_id, &200);
+            assert_eq!(
+                client.total_supply(&token_id),
+                500,
+                "INVARIANT VIOLATION: Transfer changed total supply"
+            );
 
-        assert_eq!(
-            client.total_supply(&token_id),
-            total_balance,
-            "PROPERTY VIOLATION: Supply invariant broken after operation sequence"
-        );
+            // Approve does not change supply
+            client.approve(&alice, &bob, &token_id, &100);
+            assert_eq!(
+                client.total_supply(&token_id),
+                500,
+                "INVARIANT VIOLATION: Approve changed total supply"
+            );
 
-        assert!(
-            client.balance_of(&alice, &token_id) >= 0
-                && client.balance_of(&bob, &token_id) >= 0
-                && client.balance_of(&carol, &token_id) >= 0,
-            "PROPERTY VIOLATION: Negative balance detected"
-        );
-    }
+            // Burn decreases supply
+            client.burn(&alice, &token_id, &100);
+            assert_eq!(client.total_supply(&token_id), 400);
+        }
 
-    #[test]
-    fn property_mint_burn_symmetry() {
-        let (env, client, _) = setup_fresh();
-        let user = Address::generate(&env);
-        let token_id = 1u64;
+        // =========================================================================
+        // INVARIANT 7: Zero Address Handling
+        // =========================================================================
+        /// The contract should handle zero amounts appropriately.
+        #[test]
+        #[should_panic]
+        fn invariant_mint_zero_rejected() {
+            let (env, client, _) = setup_fresh();
+            let user = Address::generate(&env);
+            let token_id = 1u64;
 
-        // Mint then burn same amount should return to initial state
-        let initial_supply = client.total_supply(&token_id);
-        let initial_balance = client.balance_of(&user, &token_id);
+            client.mint(&user, &token_id, &0);
+        }
 
-        client.mint(&user, &token_id, &500);
-        client.burn(&user, &token_id, &500);
+        #[test]
+        #[should_panic]
+        fn invariant_burn_zero_rejected() {
+            let (env, client, _) = setup_fresh();
+            let user = Address::generate(&env);
+            let token_id = 1u64;
 
-        assert_eq!(
-            client.total_supply(&token_id),
-            initial_supply,
-            "PROPERTY VIOLATION: Mint-burn symmetry broken for supply"
-        );
-        assert_eq!(
-            client.balance_of(&user, &token_id),
-            initial_balance,
-            "PROPERTY VIOLATION: Mint-burn symmetry broken for balance"
-        );
-    }
+            client.mint(&user, &token_id, &100);
+            client.burn(&user, &token_id, &0);
+        }
 
-    #[test]
-    fn property_transfer_reversibility_check() {
-        let (env, client, _) = setup_fresh();
-        let alice = Address::generate(&env);
-        let bob = Address::generate(&env);
-        let token_id = 1u64;
+        // =========================================================================
+        // INVARIANT 8: Idempotency Properties
+        // =========================================================================
+        /// Certain operations should have predictable idempotent-like behavior.
+        #[test]
+        fn invariant_approve_overwrites() {
+            let (env, client, _) = setup_fresh();
+            let owner = Address::generate(&env);
+            let spender = Address::generate(&env);
+            let token_id = 1u64;
 
-        client.mint(&alice, &token_id, &1000);
+            client.approve(&owner, &spender, &token_id, &100);
+            assert_eq!(client.allowance(&owner, &spender, &token_id), 100);
 
-        let alice_initial = client.balance_of(&alice, &token_id);
-        let bob_initial = client.balance_of(&bob, &token_id);
+            // New approval should overwrite, not add
+            client.approve(&owner, &spender, &token_id, &200);
+            assert_eq!(
+                client.allowance(&owner, &spender, &token_id),
+                200,
+                "INVARIANT VIOLATION: Approve did not overwrite previous allowance"
+            );
+        }
 
-        // Transfer A -> B
-        client.transfer(&alice, &bob, &token_id, &300);
+        // =========================================================================
+        // PROPERTY-BASED INVARIANT TESTS
+        // =========================================================================
+        /// These tests verify invariants across sequences of random-ish operations.
 
-        // Transfer B -> A (reverse)
-        client.transfer(&bob, &alice, &token_id, &300);
+        #[test]
+        fn property_sequence_invariant() {
+            let (env, client, _) = setup_fresh();
+            let alice = Address::generate(&env);
+            let bob = Address::generate(&env);
+            let carol = Address::generate(&env);
+            let token_id = 1u64;
 
-        // After round-trip, balances should be back to original
-        assert_eq!(
-            client.balance_of(&alice, &token_id),
-            alice_initial,
-            "PROPERTY VIOLATION: Round-trip transfer didn't restore sender balance"
-        );
-        assert_eq!(
-            client.balance_of(&bob, &token_id),
-            bob_initial,
-            "PROPERTY VIOLATION: Round-trip transfer didn't restore receiver balance"
-        );
+            // Sequence of operations that should maintain invariants
+            client.mint(&alice, &token_id, &1000); // Alice: 1000
+            client.mint(&bob, &token_id, &500); // Bob: 500
+            client.transfer(&alice, &bob, &token_id, &200); // Alice: 800, Bob: 700
+            client.approve(&bob, &carol, &token_id, &300);
+            client.transfer_from(&carol, &bob, &alice, &token_id, &150); // Alice: 950, Bob: 550
+            client.burn(&alice, &token_id, &100); // Total supply reduced by 100
+
+            // Verify final invariants
+            let total_balance = client.balance_of(&alice, &token_id)
+                + client.balance_of(&bob, &token_id)
+                + client.balance_of(&carol, &token_id);
+
+            assert_eq!(
+                client.total_supply(&token_id),
+                total_balance,
+                "PROPERTY VIOLATION: Supply invariant broken after operation sequence"
+            );
+
+            assert!(
+                client.balance_of(&alice, &token_id) >= 0
+                    && client.balance_of(&bob, &token_id) >= 0
+                    && client.balance_of(&carol, &token_id) >= 0,
+                "PROPERTY VIOLATION: Negative balance detected"
+            );
+        }
+
+        #[test]
+        fn property_mint_burn_symmetry() {
+            let (env, client, _) = setup_fresh();
+            let user = Address::generate(&env);
+            let token_id = 1u64;
+
+            // Mint then burn same amount should return to initial state
+            let initial_supply = client.total_supply(&token_id);
+            let initial_balance = client.balance_of(&user, &token_id);
+
+            client.mint(&user, &token_id, &500);
+            client.burn(&user, &token_id, &500);
+
+            assert_eq!(
+                client.total_supply(&token_id),
+                initial_supply,
+                "PROPERTY VIOLATION: Mint-burn symmetry broken for supply"
+            );
+            assert_eq!(
+                client.balance_of(&user, &token_id),
+                initial_balance,
+                "PROPERTY VIOLATION: Mint-burn symmetry broken for balance"
+            );
+        }
+
+        #[test]
+        fn property_transfer_reversibility_check() {
+            let (env, client, _) = setup_fresh();
+            let alice = Address::generate(&env);
+            let bob = Address::generate(&env);
+            let token_id = 1u64;
+
+            client.mint(&alice, &token_id, &1000);
+
+            let alice_initial = client.balance_of(&alice, &token_id);
+            let bob_initial = client.balance_of(&bob, &token_id);
+
+            // Transfer A -> B
+            client.transfer(&alice, &bob, &token_id, &300);
+
+            // Transfer B -> A (reverse)
+            client.transfer(&bob, &alice, &token_id, &300);
+
+            // After round-trip, balances should be back to original
+            assert_eq!(
+                client.balance_of(&alice, &token_id),
+                alice_initial,
+                "PROPERTY VIOLATION: Round-trip transfer didn't restore sender balance"
+            );
+            assert_eq!(
+                client.balance_of(&bob, &token_id),
+                bob_initial,
+                "PROPERTY VIOLATION: Round-trip transfer didn't restore receiver balance"
+            );
+        }
     }
 }
